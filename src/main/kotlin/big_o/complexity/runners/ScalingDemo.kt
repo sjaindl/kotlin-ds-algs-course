@@ -1,10 +1,10 @@
-package big_o.runners
+package big_o.complexity.runners
 
-import big_o.canReachTarget
-import big_o.countTriplets
-import big_o.reset
-import big_o.shortestRoute
-import big_o.steps
+import big_o.complexity.canReachTarget
+import big_o.complexity.countTriplets
+import big_o.complexity.reset
+import big_o.complexity.shortestRoute
+import big_o.complexity.steps
 
 // Shows how the amount of work explodes as the input grows — great for
 // seeing O(n^3), O(2^n) and O(n!) in action.

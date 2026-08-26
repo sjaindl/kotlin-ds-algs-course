@@ -1,7 +1,7 @@
-package big_o.runners
+package big_o.complexity.runners
 
-import big_o.demo
-import big_o.shortestRoute
+import big_o.complexity.demo
+import big_o.complexity.shortestRoute
 
 fun main() {
     demo("shortestRoute(6 cities)") {

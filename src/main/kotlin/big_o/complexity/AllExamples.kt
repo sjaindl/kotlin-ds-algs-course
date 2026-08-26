@@ -1,4 +1,4 @@
-package big_o
+package big_o.complexity
 
 fun main() {
     demo("sumUpTo(1000)") {

@@ -1,8 +1,8 @@
-package big_o.runners
+package big_o.complexity.runners
 
-import big_o.demo
-import big_o.sumUpTo
-import big_o.sumUpToByLooping
+import big_o.complexity.demo
+import big_o.complexity.sumUpTo
+import big_o.complexity.sumUpToByLooping
 
 fun main() {
     demo("sumUpTo(1000)") {

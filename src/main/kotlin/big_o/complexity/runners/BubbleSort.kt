@@ -1,7 +1,7 @@
-package big_o.runners
+package big_o.complexity.runners
 
-import big_o.bubbleSort
-import big_o.demo
+import big_o.complexity.bubbleSort
+import big_o.complexity.demo
 
 fun main() {
     demo("bubbleSort([5,1,4,2,8,3])") {

@@ -14,5 +14,5 @@ kotlin {
 application {
     // `./gradlew run` executes every example. In IntelliJ, use the green ▶
     // next to any individual main() to run just that example.
-    mainClass.set("big_o.AllExamplesKt")
+    mainClass.set("big_o.complexity.AllExamplesKt")
 }

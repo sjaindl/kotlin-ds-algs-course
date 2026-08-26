@@ -1,7 +1,7 @@
-package big_o.runners
+package big_o.complexity.runners
 
-import big_o.canReachTarget
-import big_o.demo
+import big_o.complexity.canReachTarget
+import big_o.complexity.demo
 
 fun main() {
     demo("canReachTarget([3,34,4,12,5,2], 120)") {

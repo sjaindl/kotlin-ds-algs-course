@@ -1,4 +1,4 @@
-package big_o
+package big_o.complexity
 
 // Shared step counter to compare how amount of work grows with the input size
 var steps = 0L
