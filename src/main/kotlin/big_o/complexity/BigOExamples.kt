@@ -188,7 +188,7 @@ fun canReachTarget(nums: IntArray, target: Int, index: Int = 0): Boolean {
 /*
     Big(O) runtime analysis
     canReachTarget: O(2^N) - exponential
-    2 choice at each position -> O(branches^depth)
+    2 choices at each position -> O(branches^depth)
  */
 
 // ---------------------------------------------------------------
