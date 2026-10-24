@@ -36,3 +36,4 @@ replay_pid*
 .idea/caches
 local.properties
 /.idea/git_toolbox_prj.xml
+/.idea/noctule.xml

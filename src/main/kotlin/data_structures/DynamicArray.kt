@@ -2,6 +2,10 @@ package data_structures
 
 class DynamicArray<T>(initialCapacity: Int = DEFAULT_CAPACITY) : Iterable<T> {
 
+    companion object {
+        const val DEFAULT_CAPACITY = 4
+    }
+
     init {
         require(initialCapacity > 0) {
             "Initial capacity must be positive, was $initialCapacity"
@@ -84,6 +88,7 @@ class DynamicArray<T>(initialCapacity: Int = DEFAULT_CAPACITY) : Iterable<T> {
         return -1
     }
 
+    // O(n)
     operator fun contains(element: T): Boolean = indexOf(element) != -1
 
     override fun iterator(): Iterator<T> = object : Iterator<T> {
@@ -97,6 +102,7 @@ class DynamicArray<T>(initialCapacity: Int = DEFAULT_CAPACITY) : Iterable<T> {
         }
     }
 
+    // O(n)
     override fun toString(): String = joinToString(prefix = "[", postfix = "]")
 
     // Shrink at one quarter (not one half) full: after halving, the array is half full,
@@ -118,9 +124,5 @@ class DynamicArray<T>(initialCapacity: Int = DEFAULT_CAPACITY) : Iterable<T> {
 
     private fun checkIndex(index: Int) {
         if (index !in 0..<size) throw IndexOutOfBoundsException("Index: $index, Size: $size")
-    }
-
-    companion object {
-        const val DEFAULT_CAPACITY = 4
     }
 }
