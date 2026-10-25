@@ -1,0 +1,724 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Next Greater Element II</title>
+<link rel="icon" type="image/png" href="../../../../../../udemy.png">
+<link rel="stylesheet" href="../../visualizer.css">
+<style>
+    :root {
+        --p1: #3b6fd8;
+        --p2: #9333ea;
+        --p3: #db2777;
+        --counter: var(--cursor);
+    }
+
+    @media (prefers-color-scheme: dark) {
+        :root {
+            --p1: #6d9bff;
+            --p2: #c084fc;
+            --p3: #f472b6;
+        }
+    }
+</style>
+</head>
+<body>
+<main>
+    <h1>Find the next greater number in a circular array</h1>
+    <div class="card">
+        <p>
+            Given a circular integer array <code>nums</code> (i.e., the next element of
+            <code>nums[nums.length - 1]</code> is <code>nums[0]</code>), return the next greater number for every
+            element in <code>nums</code>.
+        </p>
+        <p>
+            The next greater number of a number <code>x</code> is the first greater number to its traversing-order
+            next in the array, which means you could search circularly to find its next greater number. If it
+            doesn't exist, return <code>-1</code> for this number.
+        </p>
+    </div>
+
+    <div class="tabs" role="tablist">
+        <button class="tab" role="tab" data-strategy="bruteforce">Bruteforce</button>
+        <button class="tab" role="tab" data-strategy="double">Double array</button>
+        <button class="tab" role="tab" data-strategy="stack">Monotonic stack</button>
+    </div>
+    <p class="subtitle" id="strategy"></p>
+
+    <div class="card">
+        <div class="row">
+            <button data-example="1,2,1">Example 1</button>
+            <button data-example="1,2,3,4,3">Example 2</button>
+            <button id="random">Random</button>
+            <input id="custom" placeholder="Custom nums, e.g. 5,4,3,2,1">
+            <button id="load">Load</button>
+        </div>
+        <div class="error" id="error"></div>
+    </div>
+
+    <div class="card">
+        <svg id="chart" viewBox="0 0 800 300" role="img" aria-label="Array and next greater numbers"></svg>
+        <div class="row controls">
+            <button id="reset" title="Reset">⏮ Reset</button>
+            <button id="back" title="Back (←)">◀ Back</button>
+            <button id="play" class="primary" title="Play / Pause (Space)">▶ Play</button>
+            <button id="next" title="Next (→)">Next ▶</button>
+        </div>
+        <p class="muted hint">
+            Keyboard: <kbd>←</kbd> <kbd>→</kbd> step, <kbd>Space</kbd> play / pause
+        </p>
+    </div>
+
+    <div class="card">
+        <div class="grid">
+            <div class="stat">
+                <div class="label" id="label0"></div>
+                <div class="value" id="stat0">–</div>
+            </div>
+            <div class="stat">
+                <div class="label" id="label1"></div>
+                <div class="value" id="stat1">–</div>
+            </div>
+            <div class="stat">
+                <div class="label" id="label2"></div>
+                <div class="value" id="stat2">–</div>
+            </div>
+            <div class="stat">
+                <div class="label" id="counterLabel"></div>
+                <div class="value counter" id="counter">0</div>
+            </div>
+        </div>
+        <div class="message" id="message"></div>
+        <div class="result" id="result"></div>
+        <div style="margin-top: 12px">
+            <strong>Log</strong>
+            <ol id="log"></ol>
+            <div class="muted" id="noLog">Nothing done yet.</div>
+        </div>
+    </div>
+</main>
+
+<script>
+    const SVG_NS = "http://www.w3.org/2000/svg";
+    const W = 800;
+    const ROW_Y = 70;       // top of the nums row
+    const CELL_H = 46;
+    const RESULT_Y = 165;   // top of the result row
+    const STACK_Y = 240;    // top of the stack row
+
+    let nums = [];
+    let strategy = "stack";
+    let steps = [];     // snapshot after each step, steps[0] = before the first action
+    let current = 0;
+    let timer = null;
+
+    // Every builder records snapshots of the same shape, so one renderer draws all strategies:
+    //   cells:        per drawn cell "current" | "active" | "scanned" | "done" | "faded" | ""
+    //   ghostFrom:    cells from this index on are the copy of nums (double array)
+    //   results:      per index the answer so far, null = not computed yet
+    //   resultStates: per index "init" (still the initial -1) | "set" | "new" (set in this step) | ""
+    //   arcs:         [{ from, to }] i → the greater number it found
+    //   pointers:     [{ index, label }] under the nums row
+    //   stack:        values bottom → top, popped: value removed in this step (monotonic stack only)
+    function recorder(cellCount, results, resultStates) {
+        const steps = [];
+        const log = [];
+        const record = (counter, { newResult = null, ...fields }) => {
+            const states = [...resultStates];
+            if (newResult !== null) {
+                states[newResult] = "new";
+            }
+            steps.push({
+                results: [...results], resultStates: states, log: [...log], counter,
+                cells: Array(cellCount).fill(""), ghostFrom: null, arcs: [], pointers: [], stack: null, popped: null,
+                stats: ["–", "–", "–"], color: null,
+                ...fields
+            });
+        };
+        return { steps, log, record };
+    }
+
+    // Circular scan for every element, mirrors solution/NextGreaterElementIIBruteforce.kt.
+    function buildBruteforceSteps(nums) {
+        const n = nums.length;
+        const max = Math.max(...nums);
+        const results = Array(n).fill(null);
+        const resultStates = Array(n).fill("");
+        const { steps, log, record } = recorder(n, results, resultStates);
+        const cellsFor = (i, j, scanned) => nums.map((_, c) => c === i ? "current" : c === j ? "active" : scanned.includes(c) ? "scanned" : "");
+        let comparisons = 0;
+
+        record(comparisons, {
+            stats: ["–", "–", max],
+            message: `max = ${max}. For every index, scan circularly until a greater number shows up.`
+        });
+
+        for (let i = 0; i < n; i++) {
+            const value = nums[i];
+            if (value === max) {
+                results[i] = -1;
+                resultStates[i] = "set";
+                log.push(`result[${i}] = -1, ${value} is the maximum`);
+                record(comparisons, {
+                    newResult: i, stats: [i, "–", max], color: "var(--p2)",
+                    cells: cellsFor(i, null, []), pointers: [{ index: i, label: "i" }],
+                    message: `nums[${i}] = ${value} is the maximum → nothing is greater, result[${i}] = -1 without scanning.`
+                });
+                continue;
+            }
+
+            record(comparisons, {
+                stats: [i, "–", max], color: "var(--p1)",
+                cells: cellsFor(i, null, []), pointers: [{ index: i, label: "i" }],
+                message: `Index ${i}: look for the first number greater than ${value}, starting at index ${(i + 1) % n}.`
+            });
+
+            const scanned = [];
+            for (let next = i + 1; next < i + n; next++) {
+                const j = next % n;
+                const wrapped = next >= n ? " (wrapped around)" : "";
+                comparisons++;
+                const base = {
+                    stats: [i, j, max], cells: cellsFor(i, j, scanned),
+                    pointers: [{ index: i, label: "i" }, { index: j, label: "j" }]
+                };
+                if (nums[j] > value) {
+                    results[i] = nums[j];
+                    resultStates[i] = "set";
+                    log.push(`result[${i}] = ${nums[j]} after ${scanned.length + 1} comparison${scanned.length ? "s" : ""}`);
+                    record(comparisons, {
+                        ...base, newResult: i, color: "var(--good)", arcs: [{ from: i, to: j }],
+                        message: `nums[${j}] = ${nums[j]} > ${value}${wrapped} → result[${i}] = ${nums[j]}.`
+                    });
+                    break;
+                }
+                record(comparisons, {
+                    ...base, color: "var(--cursor)",
+                    message: `nums[${j}] = ${nums[j]} ≤ ${value}${wrapped} → keep scanning.`
+                });
+                scanned.push(j);
+            }
+        }
+
+        record(comparisons, {
+            stats: ["–", "–", max], color: "var(--good)",
+            message: `Done: ${n} answers with ${comparisons} comparisons.`
+        });
+        return steps;
+    }
+
+    // Scan to the right in nums + nums, mirrors solution/NextGreaterElementIIDoubleArray.kt.
+    function buildDoubleArraySteps(nums) {
+        const n = nums.length;
+        const doubled = [...nums, ...nums];
+        const results = Array(n).fill(null);
+        const resultStates = Array(n).fill("");
+        const { steps, log, record } = recorder(2 * n, results, resultStates);
+        const cellsFor = (i, j) => doubled.map((_, c) => c === i ? "current" : c === j ? "active" : c > i && c < j ? "scanned" : "");
+        let comparisons = 0;
+
+        record(comparisons, {
+            ghostFrom: n, stats: ["–", "–", 2 * n],
+            message: `Doubled array: nums + nums, length ${2 * n}. Every element scans to the right, the copy covers the wrap-around.`
+        });
+
+        for (let i = 0; i < n; i++) {
+            const value = nums[i];
+            record(comparisons, {
+                ghostFrom: n, stats: [i, "–", 2 * n], color: "var(--p1)",
+                cells: cellsFor(i, null), pointers: [{ index: i, label: "i" }],
+                message: `Index ${i}: look for the first number greater than ${value} in doubled[${i + 1}..${2 * n - 1}].`
+            });
+
+            let found = false;
+            for (let j = i + 1; j < 2 * n; j++) {
+                const copy = j >= n ? ` (copy of nums[${j - n}])` : "";
+                comparisons++;
+                const base = {
+                    ghostFrom: n, stats: [i, j, 2 * n], cells: cellsFor(i, j),
+                    pointers: [{ index: i, label: "i" }, { index: j, label: "j" }]
+                };
+                if (doubled[j] > value) {
+                    results[i] = doubled[j];
+                    resultStates[i] = "set";
+                    log.push(`result[${i}] = ${doubled[j]} after ${j - i} comparison${j - i === 1 ? "" : "s"}`);
+                    record(comparisons, {
+                        ...base, newResult: i, color: "var(--good)", arcs: [{ from: i, to: j }],
+                        message: `doubled[${j}] = ${doubled[j]}${copy} > ${value} → result[${i}] = ${doubled[j]}.`
+                    });
+                    found = true;
+                    break;
+                }
+                record(comparisons, {
+                    ...base, color: "var(--cursor)",
+                    message: `doubled[${j}] = ${doubled[j]}${copy} ≤ ${value} → keep scanning.`
+                });
+            }
+
+            if (!found) {
+                results[i] = -1;
+                resultStates[i] = "set";
+                log.push(`result[${i}] = -1 after ${2 * n - 1 - i} comparisons`);
+                record(comparisons, {
+                    ghostFrom: n, newResult: i, stats: [i, "–", 2 * n], color: "var(--p2)",
+                    cells: cellsFor(i, 2 * n), pointers: [{ index: i, label: "i" }],
+                    message: `Reached the end of the doubled array without a greater number → result[${i}] = -1.`
+                });
+            }
+        }
+
+        record(comparisons, {
+            ghostFrom: n, stats: ["–", "–", 2 * n], color: "var(--good)",
+            message: `Done: ${n} answers with ${comparisons} comparisons.`
+        });
+        return steps;
+    }
+
+    // Two right-to-left passes with a decreasing stack, mirrors solution/NextGreaterElementIIMonotonicStack.kt.
+    function buildStackSteps(nums) {
+        const n = nums.length;
+        const results = Array(n).fill(-1);
+        const resultStates = Array(n).fill("init");
+        const { steps, log, record } = recorder(n, results, resultStates);
+        const stack = [];
+        const top = () => stack.length ? stack[stack.length - 1] : "empty";
+        // processed in this pass: done, current: active, not reached in pass 1: faded
+        const cellsFor = (pass, index) => nums.map((_, c) => c === index ? "active" : c > index ? "done" : pass === 1 ? "faded" : "");
+        let ops = 0;
+
+        record(ops, {
+            stack: [],
+            message: "Walk from right to left, twice. The stack keeps candidates for “next greater”, nearest on top."
+        });
+
+        for (let pass = 1; pass <= 2; pass++) {
+            record(ops, {
+                stack: [...stack], stats: [`${pass} / 2`, "–", top()], color: "var(--p1)",
+                cells: cellsFor(pass, n),
+                message: pass === 1
+                    ? "Pass 1: the stack starts empty, so only answers to the right are found."
+                    : "Pass 2: the stack now holds numbers from the start of the array, as if they followed the end."
+            });
+
+            for (let index = n - 1; index >= 0; index--) {
+                const value = nums[index];
+                const base = { cells: cellsFor(pass, index), pointers: [{ index, label: "i" }] };
+                const popped = [];
+
+                while (stack.length && stack[stack.length - 1] <= value) {
+                    const removed = stack.pop();
+                    popped.push(removed);
+                    ops++;
+                    record(ops, {
+                        ...base, stack: [...stack], popped: removed, stats: [`${pass} / 2`, index, top()], color: "var(--p3)",
+                        message: `top ${removed} ≤ ${value} → pop: ${value} is closer and at least as big, ` +
+                            `so ${removed} can't be the answer for anything further left.`
+                    });
+                }
+
+                let answer;
+                let newResult = null;
+                if (stack.length) {
+                    results[index] = top();
+                    resultStates[index] = "set";
+                    newResult = index;
+                    answer = `top ${top()} > ${value} → result[${index}] = ${top()}`;
+                } else if (pass === 1) {
+                    answer = `stack empty → nothing greater to the right, result[${index}] stays -1 for now`;
+                } else {
+                    resultStates[index] = "set";
+                    newResult = index;
+                    answer = `stack empty → nothing greater anywhere, result[${index}] = -1`;
+                }
+
+                stack.push(value);
+                ops++;
+                log.push(`Pass ${pass}, i = ${index}: ` + (popped.length ? `pop ${popped.join(", ")}, ` : "") +
+                    `result ${results[index]}, push ${value}`);
+                record(ops, {
+                    ...base, newResult, stack: [...stack], stats: [`${pass} / 2`, index, top()], color: "var(--cursor)",
+                    message: `${answer}, then push ${value}.`
+                });
+            }
+        }
+
+        record(ops, {
+            stack: [...stack], stats: ["done", "–", top()], color: "var(--good)",
+            message: `Done: ${ops} stack operations for n = ${n}. Every number is pushed twice and popped at most twice, so O(n).`
+        });
+        return steps;
+    }
+
+    const STRATEGIES = {
+        bruteforce: {
+            build: buildBruteforceSteps,
+            labels: ["Index i", "Scan j", "Max"],
+            counter: "Comparisons",
+            height: 215,
+            check: "stack",
+            description: `Strategy shown (<code>solution/NextGreaterElementIIBruteforce.kt</code>): for every element,
+                <strong style="color: var(--p1)">scan circularly</strong> with <code>(i + 1) mod n</code>, … until a
+                greater number shows up; the <strong style="color: var(--p2)">maximum</strong> is -1 right away.
+                O(n²) time, O(1) space.`
+        },
+        double: {
+            build: buildDoubleArraySteps,
+            labels: ["Index i", "Scan j", "Doubled length"],
+            counter: "Comparisons",
+            height: 215,
+            check: "stack",
+            description: `Strategy shown (<code>solution/NextGreaterElementIIDoubleArray.kt</code>): scan to the right in
+                <strong style="color: var(--p1)">nums + nums</strong>, so the copy takes care of the wrap-around.
+                O(n²) time, O(n) space.`
+        },
+        stack: {
+            build: buildStackSteps,
+            labels: ["Pass", "Index i", "Stack top"],
+            counter: "Stack ops",
+            height: 305,
+            check: "bruteforce",
+            description: `Strategy shown (<code>solution/NextGreaterElementIIMonotonicStack.kt</code>): walk
+                <strong style="color: var(--p1)">right to left twice</strong>, keep a decreasing stack of candidates and
+                <strong style="color: var(--p3)">pop</strong> everything ≤ the current number; the top is the answer.
+                O(n) time, O(n) space.`
+        }
+    };
+
+    function el(name, attrs = {}, text) {
+        const node = document.createElementNS(SVG_NS, name);
+        for (const [key, value] of Object.entries(attrs)) {
+            node.setAttribute(key, value);
+        }
+        if (text !== undefined) {
+            node.textContent = text;
+        }
+        return node;
+    }
+
+    function renderChart(step) {
+        const svg = document.getElementById("chart");
+        svg.replaceChildren();
+        svg.setAttribute("viewBox", `0 0 ${W} ${STRATEGIES[strategy].height}`);
+
+        const cellCount = step.cells.length;
+        const values = step.ghostFrom === null ? nums : [...nums, ...nums];
+        const cw = Math.min(64, 700 / cellCount);
+        const left = (W - cellCount * cw) / 2 + 20;
+        const x = i => left + i * cw;              // left edge of cell i
+        const cx = i => x(i) + cw / 2;             // center of cell i
+        const fontSize = (value, max) => Math.min(max, (cw - 8) / (String(value).length * 0.62));
+        const label = (y, text) => svg.append(el("text", {
+            x: left - 10, y, "text-anchor": "end", "font-size": 12, fill: "var(--muted)"
+        }, text));
+
+        // arrowhead for the found arcs
+        const defs = el("defs");
+        const marker = el("marker", { id: "arrow", viewBox: "0 0 10 10", refX: 8, refY: 5, markerWidth: 7, markerHeight: 7, orient: "auto" });
+        marker.append(el("path", { d: "M0,0 L10,5 L0,10 z", fill: "var(--good)" }));
+        defs.append(marker);
+        svg.append(defs);
+
+        // nums row (plus its copy in the double array strategy)
+        label(ROW_Y + CELL_H / 2 + 4, step.ghostFrom === null ? "nums" : "doubled");
+        values.forEach((value, i) => {
+            const state = step.cells[i];
+            const ghost = step.ghostFrom !== null && i >= step.ghostFrom;
+            let fill = "var(--panel)";
+            let fillOpacity = 1;
+            let stroke = "var(--border)";
+            if (state === "current") {
+                fill = stroke = "var(--p1)";
+                fillOpacity = 0.18;
+            } else if (state === "active") {
+                fill = stroke = "var(--cursor)";
+                fillOpacity = 0.2;
+            } else if (state === "scanned") {
+                fill = "var(--muted)";
+                fillOpacity = 0.15;
+            } else if (state === "done") {
+                fill = stroke = "var(--p1)";
+                fillOpacity = 0.1;
+            }
+
+            const opacity = state === "faded" ? 0.35 : 1;
+            svg.append(el("rect", {
+                x: x(i) + 3, y: ROW_Y, width: cw - 6, height: CELL_H, rx: 6,
+                fill, "fill-opacity": fillOpacity, stroke, "stroke-width": state === "active" || state === "current" ? 3 : 2,
+                opacity, ...(ghost ? { "stroke-dasharray": "5 4" } : {})
+            }));
+            svg.append(el("text", {
+                x: cx(i), y: ROW_Y + CELL_H / 2 + 6, "text-anchor": "middle",
+                "font-size": fontSize(value, 18), "font-weight": 600, fill: ghost ? "var(--muted)" : "var(--text)", opacity
+            }, value));
+            svg.append(el("text", {
+                x: cx(i), y: ROW_Y + CELL_H + 15, "text-anchor": "middle", "font-size": 11, fill: "var(--muted)"
+            }, i));
+        });
+
+        // where the copy starts
+        if (step.ghostFrom !== null) {
+            svg.append(el("line", {
+                x1: x(step.ghostFrom), x2: x(step.ghostFrom), y1: ROW_Y - 14, y2: ROW_Y + CELL_H + 4,
+                stroke: "var(--muted)", "stroke-width": 1.5, "stroke-dasharray": "4 4"
+            }));
+            svg.append(el("text", { x: x(step.ghostFrom) + 6, y: ROW_Y - 6, "font-size": 11, fill: "var(--muted)" }, "copy of nums →"));
+        }
+
+        // arc from the current element to the greater number it found
+        for (const { from, to } of step.arcs) {
+            const height = Math.min(56, 18 + Math.abs(to - from) * 5);
+            svg.append(el("path", {
+                d: `M${cx(from)},${ROW_Y - 4} Q${(cx(from) + cx(to)) / 2},${ROW_Y - 4 - height * 2} ${cx(to)},${ROW_Y - 4}`,
+                fill: "none", stroke: "var(--good)", "stroke-width": 2.5, "marker-end": "url(#arrow)"
+            }));
+        }
+
+        // pointers under the index labels
+        for (const { index, label: text } of step.pointers) {
+            svg.append(el("text", {
+                x: cx(index), y: ROW_Y + CELL_H + 32, "text-anchor": "middle", "font-size": 12, "font-weight": 700,
+                fill: text === "i" && strategy !== "stack" ? "var(--p1)" : "var(--cursor)"
+            }, `▲ ${text}`));
+        }
+
+        // result row, aligned with nums
+        label(RESULT_Y + 24, "result");
+        step.results.forEach((value, i) => {
+            const state = step.resultStates[i];
+            let fill = "var(--panel)";
+            let fillOpacity = 1;
+            let stroke = "var(--border)";
+            if (state === "new") {
+                fill = stroke = "var(--cursor)";
+                fillOpacity = 0.2;
+            } else if (state === "set") {
+                fill = stroke = "var(--good)";
+                fillOpacity = 0.12;
+            }
+            const pending = value === null || state === "init";
+            svg.append(el("rect", {
+                x: x(i) + 3, y: RESULT_Y, width: cw - 6, height: 38, rx: 6,
+                fill, "fill-opacity": fillOpacity, stroke, "stroke-width": state === "new" ? 3 : 2,
+                ...(pending ? { "stroke-dasharray": "4 3" } : {})
+            }));
+            svg.append(el("text", {
+                x: cx(i), y: RESULT_Y + 24, "text-anchor": "middle", "font-size": fontSize(value ?? "?", 16),
+                "font-weight": pending ? 400 : 600, fill: pending ? "var(--muted)" : "var(--text)"
+            }, value ?? "?"));
+        });
+
+        // stack, bottom on the left, top on the right
+        if (step.stack !== null) {
+            label(STACK_Y + 24, "stack");
+            if (step.stack.length === 0 && step.popped === null) {
+                svg.append(el("text", { x: left + 4, y: STACK_Y + 24, "font-size": 13, fill: "var(--muted)" }, "empty"));
+            }
+            step.stack.forEach((value, i) => {
+                const isTop = i === step.stack.length - 1;
+                svg.append(el("rect", {
+                    x: x(i) + 3, y: STACK_Y, width: cw - 6, height: 38, rx: 6,
+                    fill: "var(--p3)", "fill-opacity": isTop ? 0.25 : 0.1, stroke: "var(--p3)", "stroke-width": isTop ? 3 : 1.5
+                }));
+                svg.append(el("text", {
+                    x: cx(i), y: STACK_Y + 24, "text-anchor": "middle", "font-size": fontSize(value, 16), "font-weight": 600, fill: "var(--text)"
+                }, value));
+                if (isTop) {
+                    svg.append(el("text", { x: cx(i), y: STACK_Y + 56, "text-anchor": "middle", "font-size": 11, "font-weight": 700, fill: "var(--p3)" }, "top"));
+                }
+            });
+
+            // the value popped in this step, crossed out right after the top
+            if (step.popped !== null) {
+                const i = step.stack.length;
+                svg.append(el("rect", {
+                    x: x(i) + 3, y: STACK_Y, width: cw - 6, height: 38, rx: 6,
+                    fill: "none", stroke: "var(--muted)", "stroke-width": 1.5, "stroke-dasharray": "4 3", opacity: 0.7
+                }));
+                svg.append(el("text", {
+                    x: cx(i), y: STACK_Y + 24, "text-anchor": "middle", "font-size": fontSize(step.popped, 16),
+                    fill: "var(--muted)", "text-decoration": "line-through"
+                }, step.popped));
+                svg.append(el("line", {
+                    x1: x(i) + 8, y1: STACK_Y + 32, x2: x(i) + cw - 8, y2: STACK_Y + 6, stroke: "var(--p3)", "stroke-width": 2
+                }));
+                svg.append(el("text", { x: cx(i), y: STACK_Y + 56, "text-anchor": "middle", "font-size": 11, fill: "var(--muted)" }, "popped"));
+            }
+        }
+    }
+
+    function render() {
+        const step = steps[current];
+        const isDone = current === steps.length - 1;
+        const config = STRATEGIES[strategy];
+
+        renderChart(step);
+
+        config.labels.forEach((label, i) => {
+            document.getElementById(`label${i}`).textContent = label;
+            document.getElementById(`stat${i}`).textContent = step.stats[i];
+        });
+        document.getElementById("counterLabel").textContent = config.counter;
+        document.getElementById("counter").textContent = step.counter;
+
+        const message = document.getElementById("message");
+        message.textContent = step.message;
+        message.style.borderLeftColor = step.color || "";
+
+        // cross-check with the final answers of another strategy
+        let resultText = "";
+        if (isDone) {
+            const checkSteps = STRATEGIES[config.check].build(nums);
+            const expected = checkSteps[checkSteps.length - 1].results;
+            const matches = step.results.every((value, i) => value === expected[i]);
+            const checkName = document.querySelector(`[data-strategy="${config.check}"]`).textContent.toLowerCase();
+            resultText = `Result = [${step.results.join(", ")}] ${matches ? "✓" : "✗"} (${checkName} cross-check: [${expected.join(", ")}])`;
+        }
+        document.getElementById("result").textContent = resultText;
+
+        const list = document.getElementById("log");
+        list.replaceChildren(...step.log.map(entry => {
+            const item = document.createElement("li");
+            item.textContent = entry;
+            return item;
+        }));
+        document.getElementById("noLog").style.display = step.log.length ? "none" : "block";
+
+        document.getElementById("reset").disabled = current === 0;
+        document.getElementById("back").disabled = current === 0;
+        document.getElementById("next").disabled = isDone;
+    }
+
+    // rebuild the snapshots for the current input and strategy, start from the beginning
+    function rebuild() {
+        stop();
+        steps = STRATEGIES[strategy].build(nums);
+        current = 0;
+        render();
+    }
+
+    function load(newNums) {
+        nums = newNums;
+        document.getElementById("custom").value = nums.join(",");
+        document.getElementById("error").textContent = "";
+        rebuild();
+    }
+
+    function selectStrategy(name) {
+        strategy = STRATEGIES[name] ? name : "stack";
+        document.querySelectorAll("[data-strategy]").forEach(tab => {
+            tab.setAttribute("aria-selected", tab.dataset.strategy === strategy);
+        });
+        document.getElementById("strategy").innerHTML = STRATEGIES[strategy].description;
+        try {
+            history.replaceState(null, "", `#${strategy}`);
+        } catch (e) {
+            // some browsers block history changes for pages opened from disk, the tab still works
+        }
+    }
+
+    function go(index) {
+        current = Math.max(0, Math.min(steps.length - 1, index));
+        render();
+    }
+
+    function play() {
+        if (current === steps.length - 1) {
+            current = 0;
+        }
+        document.getElementById("play").textContent = "⏸ Pause";
+        timer = setInterval(() => {
+            if (current >= steps.length - 1) {
+                stop();
+                return;
+            }
+            go(current + 1);
+        }, 800);
+    }
+
+    function stop() {
+        clearInterval(timer);
+        timer = null;
+        document.getElementById("play").textContent = "▶ Play";
+    }
+
+    function parseCustom(text) {
+        const values = text.split(/[\s,]+/).filter(Boolean).map(Number);
+        if (values.length === 0) {
+            throw new Error("Enter at least one number.");
+        }
+        if (values.length > 12) {
+            throw new Error("Keep it to 12 numbers or fewer so the doubled array stays readable.");
+        }
+        if (values.some(v => !Number.isInteger(v) || v < -1e9 || v > 1e9)) {
+            throw new Error("Numbers must be whole numbers between -10^9 and 10^9.");
+        }
+        return values;
+    }
+
+    document.querySelectorAll("[data-strategy]").forEach(tab => {
+        tab.addEventListener("click", () => {
+            selectStrategy(tab.dataset.strategy);
+            rebuild();
+        });
+    });
+
+    document.querySelectorAll("[data-example]").forEach(button => {
+        button.addEventListener("click", () => load(button.dataset.example.split(",").map(Number)));
+    });
+
+    document.getElementById("random").addEventListener("click", () => {
+        const length = 6 + Math.floor(Math.random() * 5);
+        load(Array.from({ length }, () => 1 + Math.floor(Math.random() * 9)));
+    });
+
+    document.getElementById("load").addEventListener("click", () => {
+        try {
+            load(parseCustom(document.getElementById("custom").value));
+        } catch (e) {
+            document.getElementById("error").textContent = e.message;
+        }
+    });
+
+    document.getElementById("custom").addEventListener("keydown", e => {
+        if (e.key === "Enter") {
+            document.getElementById("load").click();
+        }
+    });
+
+    document.getElementById("reset").addEventListener("click", () => {
+        stop();
+        go(0);
+    });
+    document.getElementById("back").addEventListener("click", () => {
+        stop();
+        go(current - 1);
+    });
+    document.getElementById("next").addEventListener("click", () => {
+        stop();
+        go(current + 1);
+    });
+    document.getElementById("play").addEventListener("click", () => (timer ? stop() : play()));
+
+    document.addEventListener("keydown", e => {
+        if (e.target.tagName === "INPUT") {
+            return;
+        }
+        if (e.key === "ArrowRight") {
+            stop();
+            go(current + 1);
+        } else if (e.key === "ArrowLeft") {
+            stop();
+            go(current - 1);
+        } else if (e.key === " ") {
+            e.preventDefault();
+            timer ? stop() : play();
+        }
+    });
+
+    // the selected tab is kept in the URL hash, e.g. NextGreaterElementII.html#bruteforce
+    selectStrategy(location.hash.slice(1));
+    load([1, 2, 3, 4, 3]);
+</script>
+</body>
+</html>
