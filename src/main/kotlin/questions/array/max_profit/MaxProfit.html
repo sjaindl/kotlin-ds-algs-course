@@ -5,156 +5,23 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Max Profit</title>
 <link rel="icon" type="image/png" href="../../../../../../udemy.png">
+<link rel="stylesheet" href="../../visualizer.css">
 <style>
     :root {
-        --bg: #f7f7f5;
-        --panel: #ffffff;
-        --text: #1f2328;
-        --muted: #6b7280;
-        --border: #e2e2de;
         --line: #3b6fd8;
         --buy: #16a34a;
         --sell: #dc2626;
         --trade: rgba(22, 163, 74, 0.16);
-        --cursor: #f59e0b;
-        --accent: #3b6fd8;
+        --counter: var(--buy);
     }
 
     @media (prefers-color-scheme: dark) {
         :root {
-            --bg: #15171a;
-            --panel: #1e2125;
-            --text: #e6e6e3;
-            --muted: #9aa0a8;
-            --border: #33373d;
             --line: #6d9bff;
             --buy: #34d399;
             --sell: #f87171;
             --trade: rgba(52, 211, 153, 0.18);
-            --cursor: #fbbf24;
-            --accent: #6d9bff;
         }
-    }
-
-    * {
-        box-sizing: border-box;
-    }
-
-    body {
-        margin: 0;
-        padding: 24px 16px 48px;
-        background: var(--bg);
-        color: var(--text);
-        font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
-    }
-
-    main {
-        max-width: 960px;
-        margin: 0 auto;
-    }
-
-    h1 {
-        margin: 0 0 4px;
-        font-size: 1.5rem;
-    }
-
-    .subtitle {
-        margin: 0 0 20px;
-        color: var(--muted);
-    }
-
-    .card {
-        background: var(--panel);
-        border: 1px solid var(--border);
-        border-radius: 10px;
-        padding: 16px;
-        margin-bottom: 16px;
-    }
-
-    .row {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 8px;
-        align-items: center;
-    }
-
-    button, input {
-        font: inherit;
-        color: inherit;
-        background: var(--bg);
-        border: 1px solid var(--border);
-        border-radius: 6px;
-        padding: 6px 12px;
-    }
-
-    button {
-        cursor: pointer;
-    }
-
-    button:hover:not(:disabled) {
-        border-color: var(--accent);
-    }
-
-    button:disabled {
-        opacity: 0.4;
-        cursor: default;
-    }
-
-    button.primary {
-        background: var(--accent);
-        border-color: var(--accent);
-        color: #fff;
-    }
-
-    input {
-        flex: 1;
-        min-width: 160px;
-    }
-
-    .error {
-        color: var(--sell);
-        font-size: 0.9rem;
-        min-height: 1.2em;
-        margin-top: 6px;
-    }
-
-    svg {
-        width: 100%;
-        height: auto;
-        display: block;
-    }
-
-    .grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-        gap: 12px;
-        margin-bottom: 12px;
-    }
-
-    .stat .label {
-        color: var(--muted);
-        font-size: 0.8rem;
-        text-transform: uppercase;
-        letter-spacing: 0.04em;
-    }
-
-    .stat .value {
-        font-size: 1.25rem;
-        font-weight: 600;
-    }
-
-    .stat .value.profit {
-        font-size: 2rem;
-        color: var(--buy);
-        font-variant-numeric: tabular-nums;
-    }
-
-    .message {
-        padding: 10px 12px;
-        border-left: 4px solid var(--accent);
-        background: var(--bg);
-        border-radius: 4px;
-        min-height: 2.8em;
     }
 
     .message.buy {
@@ -164,39 +31,13 @@
     .message.sell {
         border-color: var(--sell);
     }
-
-    .result {
-        margin-top: 12px;
-        font-weight: 600;
-    }
-
-    ol {
-        margin: 8px 0 0;
-        padding-left: 20px;
-    }
-
-    .muted {
-        color: var(--muted);
-    }
-
-    .controls {
-        justify-content: center;
-        margin-top: 12px;
-    }
-
-    kbd {
-        font: 0.8rem ui-monospace, monospace;
-        border: 1px solid var(--border);
-        border-radius: 4px;
-        padding: 0 4px;
-    }
 </style>
 </head>
 <body>
 <main>
     <h1>Calculate max profits to buy and sell a stock</h1>
     <div class="card">
-        <p style="margin-top: 0">
+        <p>
             You are given an integer array <code>prices</code> where <code>prices[i]</code> is the price of a
             given stock on the i<sup>th</sup> day.
         </p>
@@ -205,7 +46,7 @@
             stock at any time. However, you can sell and buy the stock multiple times on the same day, ensuring
             you never hold more than one share of the stock.
         </p>
-        <p style="margin-bottom: 0">Find and return the maximum profit you can achieve.</p>
+        <p>Find and return the maximum profit you can achieve.</p>
     </div>
     <p class="subtitle">
         Strategy shown: buy at every
@@ -233,7 +74,7 @@
             <button id="play" class="primary" title="Play / Pause (Space)">▶ Play</button>
             <button id="next" title="Next (→)">Next ▶</button>
         </div>
-        <p class="muted" style="text-align: center; margin: 8px 0 0; font-size: 0.85rem">
+        <p class="muted hint">
             Keyboard: <kbd>←</kbd> <kbd>→</kbd> step, <kbd>Space</kbd> play / pause
         </p>
     </div>
@@ -254,7 +95,7 @@
             </div>
             <div class="stat">
                 <div class="label">Profit</div>
-                <div class="value profit" id="profit">0</div>
+                <div class="value counter" id="profit">0</div>
             </div>
         </div>
         <div class="message" id="message"></div>

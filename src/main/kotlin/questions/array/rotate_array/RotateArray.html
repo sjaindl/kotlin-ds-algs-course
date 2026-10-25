@@ -1,0 +1,684 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rotate Array</title>
+<link rel="icon" type="image/png" href="../../../../../../udemy.png">
+<link rel="stylesheet" href="../../visualizer.css">
+<style>
+    :root {
+        --p1: #3b6fd8;
+        --p2: #9333ea;
+        --p3: #db2777;
+        --counter: var(--cursor);
+    }
+
+    @media (prefers-color-scheme: dark) {
+        :root {
+            --p1: #6d9bff;
+            --p2: #c084fc;
+            --p3: #f472b6;
+        }
+    }
+
+    input.k {
+        flex: 0 0 110px;
+        min-width: 0;
+    }
+</style>
+</head>
+<body>
+<main>
+    <h1>Rotate an array to the right by k steps</h1>
+    <div class="card">
+        <p>
+            Given an integer array <code>nums</code>, rotate the array to the right by <code>k</code> steps,
+            where <code>k</code> is non-negative.
+        </p>
+    </div>
+
+    <div class="tabs" role="tablist">
+        <button class="tab" role="tab" data-strategy="bruteforce">Bruteforce</button>
+        <button class="tab" role="tab" data-strategy="cyclic">Cyclic replacements</button>
+        <button class="tab" role="tab" data-strategy="reverse">Reverse</button>
+    </div>
+    <p class="subtitle" id="strategy"></p>
+
+    <div class="card">
+        <div class="row">
+            <button data-example="1,2,3,4,5,6,7" data-k="3">Example 1</button>
+            <button data-example="-1,-100,3,99" data-k="2">Example 2</button>
+            <button id="random">Random</button>
+            <input id="custom" placeholder="Custom nums, e.g. 1,2,3,4,5">
+            <input id="customK" class="k" type="number" min="0" placeholder="k">
+            <button id="load">Load</button>
+        </div>
+        <div class="error" id="error"></div>
+    </div>
+
+    <div class="card">
+        <svg id="chart" viewBox="0 0 800 290" role="img" aria-label="Array being rotated"></svg>
+        <div class="row controls">
+            <button id="reset" title="Reset">⏮ Reset</button>
+            <button id="back" title="Back (←)">◀ Back</button>
+            <button id="play" class="primary" title="Play / Pause (Space)">▶ Play</button>
+            <button id="next" title="Next (→)">Next ▶</button>
+        </div>
+        <p class="muted hint">
+            Keyboard: <kbd>←</kbd> <kbd>→</kbd> step, <kbd>Space</kbd> play / pause
+        </p>
+    </div>
+
+    <div class="card">
+        <div class="grid">
+            <div class="stat">
+                <div class="label" id="label0"></div>
+                <div class="value" id="stat0">–</div>
+            </div>
+            <div class="stat">
+                <div class="label" id="label1"></div>
+                <div class="value" id="stat1">–</div>
+            </div>
+            <div class="stat">
+                <div class="label" id="label2"></div>
+                <div class="value" id="stat2">–</div>
+            </div>
+            <div class="stat">
+                <div class="label" id="counterLabel"></div>
+                <div class="value counter" id="counter">0</div>
+            </div>
+        </div>
+        <div class="message" id="message"></div>
+        <div class="result" id="result"></div>
+        <div style="margin-top: 12px">
+            <strong>Log</strong>
+            <ol id="log"></ol>
+            <div class="muted" id="noLog">Nothing done yet.</div>
+        </div>
+    </div>
+</main>
+
+<script>
+    const SVG_NS = "http://www.w3.org/2000/svg";
+    const W = 800;
+    const ROW_Y = 150;      // top of the main array row
+    const CELL_H = 52;
+
+    let nums = [];
+    let k = 0;
+    let strategy = "reverse";
+    let steps = [];     // snapshot after each step, steps[0] = before the first action
+    let current = 0;
+    let timer = null;
+
+    // Every builder records snapshots of the same shape, so one renderer draws all strategies:
+    //   cells:    per index "settled" | "active" | "done" | "faded" | ""
+    //   arcs:     [{ from, to, both }] value moves (both = swap)
+    //   pointers: [{ index, label }] under the row
+    //   carry:    { index, label } value held in a variable, drawn under that index
+    //   bracket:  { from, to, label, color } segment being worked on
+    function recorder(array, n) {
+        const steps = [];
+        const log = [];
+        const record = (counter, fields) => steps.push({
+            nums: [...array], log: [...log], counter,
+            cells: Array(n).fill(""), arcs: [], pointers: [], carry: null, bracket: null, divider: null,
+            stats: ["–", "–", "–"], color: null,
+            ...fields
+        });
+        return { steps, log, record };
+    }
+
+    // k passes of shifting by one, mirrors solution/RotateArrayBruteforce.kt.
+    function buildBruteforceSteps(input, k) {
+        const n = input.length;
+        const shift = k % n;
+        const array = [...input];
+        const { steps, log, record } = recorder(array, n);
+        let writes = 0;
+
+        record(writes, {
+            stats: [`0 / ${shift}`, "–", "–"],
+            message: shift === 0
+                ? `n = ${n}, k = ${k} → k mod n = 0, no passes needed.`
+                : `n = ${n}, k = ${k} → k mod n = ${shift} passes, each moves every element one step right.`
+        });
+
+        for (let pass = 1; pass <= shift; pass++) {
+            const passText = `${pass} / ${shift}`;
+            let last = array[n - 1];
+            record(writes, {
+                stats: [passText, "–", last], color: "var(--p1)",
+                carry: { index: n - 1, label: `last = ${last}` },
+                message: `Pass ${pass}: last = nums[${n - 1}] = ${last}, it wraps around to the front.`
+            });
+
+            for (let index = 0; index < n; index++) {
+                const temp = array[index];
+                array[index] = last;
+                writes++;
+                const source = index === 0 ? n - 1 : index - 1;
+                const message = index < n - 1
+                    ? `Write last ${last} into nums[${index}], pick up the old ${temp} as the new last.`
+                    : `Write last ${last} into nums[${index}], the old ${temp} already went to nums[0].`;
+                last = temp;
+                record(writes, {
+                    stats: [passText, index, last], color: "var(--cursor)",
+                    cells: array.map((_, i) => i < index ? "done" : i === index ? "active" : "faded"),
+                    arcs: [{ from: source, to: index }],
+                    pointers: [{ index, label: "index" }],
+                    carry: index < n - 1 ? { index, label: `last = ${last}` } : null,
+                    message
+                });
+            }
+
+            log.push(`Pass ${pass}: shifted right by one → [${array.join(", ")}]`);
+            record(writes, {
+                stats: [passText, "–", "–"], color: "var(--p1)",
+                cells: Array(n).fill("done"),
+                message: `Pass ${pass} done: every element moved one step right, the old last is now at index 0.`
+            });
+        }
+
+        record(writes, {
+            stats: [`${shift} / ${shift}`, "–", "–"], color: "var(--good)",
+            cells: Array(n).fill("settled"),
+            message: `Done: ${shift} passes × ${n} writes = ${writes} writes.`
+        });
+        return steps;
+    }
+
+    // Move every value straight to (index + shift) mod n, mirrors solution/RotateArrayCyclicReplacements.kt.
+    function buildCyclicSteps(input, k) {
+        const n = input.length;
+        const shift = k % n;
+        const array = [...input];
+        const { steps, log, record } = recorder(array, n);
+        const placed = new Set();
+        const cellsFor = active => array.map((_, i) => i === active ? "active" : placed.has(i) ? "settled" : "faded");
+        let moved = 0;
+        let cycle = 0;
+
+        if (n < 2) {
+            record(moved, { message: "n < 2 → nothing to rotate." });
+            return steps;
+        }
+
+        record(moved, {
+            message: `n = ${n}, k = ${k} → shift = ${shift}. Each value moves straight to (index + ${shift}) mod ${n}.`
+        });
+
+        let startIndex = 0;
+        while (moved < n) {
+            cycle++;
+            let fromIndex = startIndex;
+            let fromValue = array[startIndex];
+            record(moved, {
+                stats: [`${cycle} (start ${startIndex})`, "–", fromValue], color: "var(--p2)",
+                cells: cellsFor(startIndex),
+                pointers: [{ index: startIndex, label: "start" }],
+                carry: { index: startIndex, label: `carry = ${fromValue}` },
+                message: `Cycle ${cycle}: start at index ${startIndex} and pick up ${fromValue}.`
+            });
+
+            do {
+                const toIndex = (fromIndex + shift) % n;
+                const temp = array[toIndex];
+                array[toIndex] = fromValue;
+                moved++;
+                placed.add(toIndex);
+                const closed = toIndex === startIndex;
+                log.push(`Move ${fromValue}: index ${fromIndex} → ${toIndex}`);
+                record(moved, {
+                    stats: [`${cycle} (start ${startIndex})`, `${fromIndex} → ${toIndex}`, closed ? "–" : temp],
+                    color: "var(--cursor)",
+                    cells: cellsFor(toIndex),
+                    arcs: fromIndex === toIndex ? [] : [{ from: fromIndex, to: toIndex }],
+                    pointers: [{ index: toIndex, label: "to" }],
+                    carry: closed ? null : { index: toIndex, label: `carry = ${temp}` },
+                    message: `Move ${fromValue} from index ${fromIndex} to (${fromIndex} + ${shift}) mod ${n} = ${toIndex}` +
+                        (closed ? ", back at the start → cycle closed." : `, pick up the old ${temp}.`)
+                });
+                fromValue = temp;
+                fromIndex = toIndex;
+            } while (fromIndex !== startIndex);
+
+            startIndex++;
+        }
+
+        record(moved, {
+            stats: [`${cycle} cycles`, "–", "–"], color: "var(--good)",
+            cells: Array(n).fill("settled"),
+            message: `Done: all ${n} values moved exactly once in ${cycle} cycle${cycle === 1 ? "" : "s"}.`
+        });
+        return steps;
+    }
+
+    const PHASES = [
+        null,
+        { name: "reverse all", color: "var(--p1)" },
+        { name: "reverse first k", color: "var(--p2)" },
+        { name: "reverse last n − k", color: "var(--p3)" }
+    ];
+
+    // Reverse trick, mirrors solution/RotateArrayReverse.kt.
+    function buildReverseSteps(input, k) {
+        const n = input.length;
+        const shift = k % n;
+        const array = [...input];
+        const { steps, log, record } = recorder(array, n);
+        const divider = shift > 0 && shift < n ? shift : null;
+        let swaps = 0;
+
+        // phase 2 fixes the first k cells for good; outside the current segment everything waits
+        const cellsFor = (phase, from, to, start, end, swapping) => array.map((_, i) => {
+            if (phase === 3 && i < shift) {
+                return "settled";
+            }
+            if (swapping !== null && swapping.includes(i)) {
+                return "active";
+            }
+            if (i < from || i > to) {
+                return "faded";
+            }
+            return start !== null && (i < start || i > end) ? "done" : "";
+        });
+
+        record(swaps, {
+            divider, stats: ["– / 3", "–", `${shift}`],
+            message: `n = ${n}, k = ${k} → shift = k mod n = ${shift}. Press Next ▶ to reverse the whole array.`
+        });
+
+        const segments = [[0, n - 1], [0, shift - 1], [shift, n - 1]];
+        segments.forEach(([from, to], i) => {
+            const phase = i + 1;
+            const { name, color } = PHASES[phase];
+            const range = `nums[${from}..${to}]`;
+            const bracket = from <= to ? { from, to, label: `${phase} · ${name}`, color } : null;
+            const snapshot = (start, end, swapping, message) => record(swaps, {
+                divider, bracket, color: swapping ? "var(--cursor)" : color,
+                cells: cellsFor(phase, from, to, start, end, swapping),
+                arcs: swapping ? [{ from: swapping[0], to: swapping[1], both: true }] : [],
+                pointers: start === null ? [] : start === end
+                    ? [{ index: start, label: "start = end" }]
+                    : [{ index: start, label: "start" }, { index: end, label: "end" }],
+                stats: [`${phase} / 3`, start === null ? "–" : `start ${start} · end ${end}`, `${shift}`],
+                message
+            });
+
+            // reverse(from, to)
+            if (to - from < 1) {
+                const why = to < from ? "is empty" : "has a single element";
+                log.push(`Phase ${phase}: ${range} ${why}, skipped`);
+                snapshot(null, null, null, `Phase ${phase}: ${range} ${why} → nothing to reverse.`);
+                return;
+            }
+
+            let start = from;
+            let end = to;
+            snapshot(start, end, null, `Phase ${phase}: ${name}, ${range}. Start with start = ${start}, end = ${end}.`);
+
+            while (start < end) {
+                const a = array[start];
+                const b = array[end];
+                array[start] = b;
+                array[end] = a;
+                swaps++;
+                log.push(`Swap nums[${start}] = ${a} ↔ nums[${end}] = ${b}`);
+                snapshot(start, end, [start, end], `start ${start} < end ${end} → swap ${a} ↔ ${b}, then move both pointers inward.`);
+                start++;
+                end--;
+            }
+
+            log.push(`Phase ${phase}: reversed ${range} → [${array.join(", ")}]`);
+            snapshot(start, end, null, `start ${start} ≥ end ${end} → pointers met, ${range} is reversed.`);
+        });
+
+        record(swaps, {
+            stats: ["done", "–", `${shift}`], color: "var(--good)",
+            cells: Array(n).fill("settled"),
+            message: `Done: [${input.join(", ")}] rotated right by ${k} is [${array.join(", ")}].`
+        });
+        return steps;
+    }
+
+    const STRATEGIES = {
+        bruteforce: {
+            build: buildBruteforceSteps,
+            labels: ["Pass", "Index", "last"],
+            counter: "Writes",
+            description: `Strategy shown (<code>solution/RotateArrayBruteforce.kt</code>): rotate by
+                <strong style="color: var(--p1)">one step</strong>, k mod n times. O(n · k) time, O(1) space.`
+        },
+        cyclic: {
+            build: buildCyclicSteps,
+            labels: ["Cycle", "From → to", "carry"],
+            counter: "Moved",
+            description: `Strategy shown (<code>solution/RotateArrayCyclicReplacements.kt</code>): move each value
+                <strong style="color: var(--p2)">straight to its final index</strong>, carrying the replaced value
+                along until the cycle closes. O(n) time, O(1) space.`
+        },
+        reverse: {
+            build: buildReverseSteps,
+            labels: ["Phase", "Pointers", "Shift = k mod n"],
+            counter: "Swaps",
+            description: `Strategy shown (<code>solution/RotateArrayReverse.kt</code>):
+                <strong style="color: var(--p1)">reverse all</strong>, then
+                <strong style="color: var(--p2)">reverse the first k</strong>, then
+                <strong style="color: var(--p3)">reverse the last n − k</strong>. O(n) time, O(1) space.`
+        }
+    };
+
+    // Write every element to (index + k) mod n in a copy, mirrors solution/RotateArrayExtraArray.kt.
+    function rotateExtraArray(nums, k) {
+        const result = [...nums];
+        nums.forEach((value, index) => {
+            result[(index + k) % nums.length] = value;
+        });
+        return result;
+    }
+
+    function el(name, attrs = {}, text) {
+        const node = document.createElementNS(SVG_NS, name);
+        for (const [key, value] of Object.entries(attrs)) {
+            node.setAttribute(key, value);
+        }
+        if (text !== undefined) {
+            node.textContent = text;
+        }
+        return node;
+    }
+
+    function renderChart(step) {
+        const svg = document.getElementById("chart");
+        svg.replaceChildren();
+
+        const n = nums.length;
+        const cw = Math.min(72, 720 / n);
+        const left = (W - n * cw) / 2;
+        const x = i => left + i * cw;              // left edge of cell i
+        const cx = i => x(i) + cw / 2;             // center of cell i
+        const fontSize = (value, max) => Math.min(max, (cw - 8) / (String(value).length * 0.62));
+        const below = ROW_Y + CELL_H;
+
+        // arrowhead for the move / swap arcs
+        const defs = el("defs");
+        const marker = el("marker", { id: "arrow", viewBox: "0 0 10 10", refX: 8, refY: 5, markerWidth: 7, markerHeight: 7, orient: "auto-start-reverse" });
+        marker.append(el("path", { d: "M0,0 L10,5 L0,10 z", fill: "var(--cursor)" }));
+        defs.append(marker);
+        svg.append(defs);
+
+        // faint input row for reference
+        svg.append(el("text", { x: left - 8, y: 36, "text-anchor": "end", "font-size": 11, fill: "var(--muted)" }, "input"));
+        nums.forEach((value, i) => {
+            svg.append(el("rect", { x: x(i) + 3, y: 18, width: cw - 6, height: 26, rx: 4, fill: "none", stroke: "var(--border)" }));
+            svg.append(el("text", {
+                x: cx(i), y: 36, "text-anchor": "middle", "font-size": fontSize(value, 13), fill: "var(--muted)"
+            }, value));
+        });
+
+        // boundary between the first k and the last n - k cells
+        if (step.divider !== null) {
+            svg.append(el("line", {
+                x1: x(step.divider), x2: x(step.divider), y1: ROW_Y - 12, y2: below + 6,
+                stroke: "var(--muted)", "stroke-width": 1.5, "stroke-dasharray": "4 4"
+            }));
+            svg.append(el("text", { x: x(step.divider), y: ROW_Y - 18, "text-anchor": "middle", "font-size": 11, fill: "var(--muted)" }, "k mod n"));
+        }
+
+        // main array row
+        step.nums.forEach((value, i) => {
+            const state = step.cells[i];
+            let fill = "var(--panel)";
+            let fillOpacity = 1;
+            let stroke = "var(--border)";
+            if (state === "settled") {
+                fill = stroke = "var(--good)";
+                fillOpacity = 0.15;
+            } else if (state === "active") {
+                fill = stroke = "var(--cursor)";
+                fillOpacity = 0.2;
+            } else if (state === "done") {
+                fill = stroke = step.bracket ? step.bracket.color : "var(--p1)";
+                fillOpacity = 0.15;
+            }
+
+            const opacity = state === "faded" ? 0.35 : 1;
+            svg.append(el("rect", {
+                x: x(i) + 3, y: ROW_Y, width: cw - 6, height: CELL_H, rx: 6,
+                fill, "fill-opacity": fillOpacity, stroke, "stroke-width": state === "active" ? 3 : 2, opacity
+            }));
+            svg.append(el("text", {
+                x: cx(i), y: ROW_Y + CELL_H / 2 + 6, "text-anchor": "middle",
+                "font-size": fontSize(value, 18), "font-weight": 600, fill: "var(--text)", opacity
+            }, value));
+            svg.append(el("text", {
+                x: cx(i), y: below + 16, "text-anchor": "middle", "font-size": 11, fill: "var(--muted)"
+            }, i));
+        });
+
+        // arcs above the row: a value moving from one cell to another (both ends for a swap)
+        for (const { from, to, both } of step.arcs) {
+            const height = Math.min(80, 24 + Math.abs(to - from) * 6);
+            svg.append(el("path", {
+                d: `M${cx(from)},${ROW_Y - 4} Q${(cx(from) + cx(to)) / 2},${ROW_Y - 4 - height * 2} ${cx(to)},${ROW_Y - 4}`,
+                fill: "none", stroke: "var(--cursor)", "stroke-width": 2.5,
+                "marker-end": "url(#arrow)", ...(both ? { "marker-start": "url(#arrow)" } : {})
+            }));
+        }
+
+        // pointers below the index labels; after a reverse loop they may have crossed out of the row
+        for (const { index, label } of step.pointers) {
+            if (index < 0 || index >= n) {
+                continue;
+            }
+            svg.append(el("text", {
+                x: cx(index), y: below + 34, "text-anchor": "middle", "font-size": 12, "font-weight": 700, fill: "var(--cursor)"
+            }, `▲ ${label}`));
+        }
+
+        // value held in a variable (last / carry), drawn under its cell and kept inside the view
+        if (step.carry !== null) {
+            const width = Math.max(cw - 6, 90);
+            const boxX = Math.max(4, Math.min(W - width - 4, cx(step.carry.index) - width / 2));
+            svg.append(el("rect", {
+                x: boxX, y: below + 44, width, height: 28, rx: 6,
+                fill: "var(--cursor)", "fill-opacity": 0.15, stroke: "var(--cursor)", "stroke-width": 2
+            }));
+            svg.append(el("text", {
+                x: boxX + width / 2, y: below + 63, "text-anchor": "middle", "font-size": 13, "font-weight": 700, fill: "var(--text)"
+            }, step.carry.label));
+        }
+
+        // bracket under the segment being worked on
+        if (step.bracket !== null) {
+            const { from, to, label, color } = step.bracket;
+            const x1 = x(from) + 3;
+            const x2 = x(to + 1) - 3;
+            const y = below + 48;
+            svg.append(el("path", { d: `M${x1},${y - 8} V${y} H${x2} V${y - 8}`, fill: "none", stroke: color, "stroke-width": 2 }));
+            svg.append(el("text", {
+                x: (x1 + x2) / 2, y: y + 18, "text-anchor": "middle", "font-size": 13, "font-weight": 700, fill: color
+            }, label));
+        }
+    }
+
+    function render() {
+        const step = steps[current];
+        const isDone = current === steps.length - 1;
+        const config = STRATEGIES[strategy];
+
+        renderChart(step);
+
+        config.labels.forEach((label, i) => {
+            document.getElementById(`label${i}`).textContent = label;
+            document.getElementById(`stat${i}`).textContent = step.stats[i];
+        });
+        document.getElementById("counterLabel").textContent = config.counter;
+        document.getElementById("counter").textContent = step.counter;
+
+        const message = document.getElementById("message");
+        message.textContent = step.message;
+        message.style.borderLeftColor = step.color || "";
+
+        const expected = rotateExtraArray(nums, k);
+        const matches = step.nums.every((value, i) => value === expected[i]);
+        document.getElementById("result").textContent = isDone
+            ? `Rotated = [${step.nums.join(", ")}] ${matches ? "✓" : "✗"} (extra array cross-check: [${expected.join(", ")}])`
+            : "";
+
+        const list = document.getElementById("log");
+        list.replaceChildren(...step.log.map(entry => {
+            const item = document.createElement("li");
+            item.textContent = entry;
+            return item;
+        }));
+        document.getElementById("noLog").style.display = step.log.length ? "none" : "block";
+
+        document.getElementById("reset").disabled = current === 0;
+        document.getElementById("back").disabled = current === 0;
+        document.getElementById("next").disabled = isDone;
+    }
+
+    // rebuild the snapshots for the current input and strategy, start from the beginning
+    function rebuild() {
+        stop();
+        steps = STRATEGIES[strategy].build(nums, k);
+        current = 0;
+        render();
+    }
+
+    function load(newNums, newK) {
+        nums = newNums;
+        k = newK;
+        document.getElementById("custom").value = nums.join(",");
+        document.getElementById("customK").value = k;
+        document.getElementById("error").textContent = "";
+        rebuild();
+    }
+
+    function selectStrategy(name) {
+        strategy = STRATEGIES[name] ? name : "reverse";
+        document.querySelectorAll("[data-strategy]").forEach(tab => {
+            tab.setAttribute("aria-selected", tab.dataset.strategy === strategy);
+        });
+        document.getElementById("strategy").innerHTML = STRATEGIES[strategy].description;
+        try {
+            history.replaceState(null, "", `#${strategy}`);
+        } catch (e) {
+            // some browsers block history changes for pages opened from disk, the tab still works
+        }
+    }
+
+    function go(index) {
+        current = Math.max(0, Math.min(steps.length - 1, index));
+        render();
+    }
+
+    function play() {
+        if (current === steps.length - 1) {
+            current = 0;
+        }
+        document.getElementById("play").textContent = "⏸ Pause";
+        timer = setInterval(() => {
+            if (current >= steps.length - 1) {
+                stop();
+                return;
+            }
+            go(current + 1);
+        }, 800);
+    }
+
+    function stop() {
+        clearInterval(timer);
+        timer = null;
+        document.getElementById("play").textContent = "▶ Play";
+    }
+
+    function parseCustom(text, kText) {
+        const values = text.split(/[\s,]+/).filter(Boolean).map(Number);
+        if (values.length === 0) {
+            throw new Error("Enter at least one number.");
+        }
+        if (values.length > 16) {
+            throw new Error("Keep it to 16 numbers or fewer so the array stays readable.");
+        }
+        if (values.some(v => !Number.isInteger(v) || v < -(2 ** 31) || v > 2 ** 31 - 1)) {
+            throw new Error("Numbers must be whole numbers between -2^31 and 2^31 - 1.");
+        }
+        const k = Number(kText);
+        if (kText.trim() === "" || !Number.isInteger(k) || k < 0 || k > 100000) {
+            throw new Error("k must be a whole number between 0 and 100000.");
+        }
+        return [values, k];
+    }
+
+    document.querySelectorAll("[data-strategy]").forEach(tab => {
+        tab.addEventListener("click", () => {
+            selectStrategy(tab.dataset.strategy);
+            rebuild();
+        });
+    });
+
+    document.querySelectorAll("[data-example]").forEach(button => {
+        button.addEventListener("click", () => load(button.dataset.example.split(",").map(Number), Number(button.dataset.k)));
+    });
+
+    document.getElementById("random").addEventListener("click", () => {
+        const length = 5 + Math.floor(Math.random() * 6);
+        load(Array.from({ length }, () => 1 + Math.floor(Math.random() * 99)), Math.floor(Math.random() * 13));
+    });
+
+    document.getElementById("load").addEventListener("click", () => {
+        try {
+            load(...parseCustom(document.getElementById("custom").value, document.getElementById("customK").value));
+        } catch (e) {
+            document.getElementById("error").textContent = e.message;
+        }
+    });
+
+    for (const id of ["custom", "customK"]) {
+        document.getElementById(id).addEventListener("keydown", e => {
+            if (e.key === "Enter") {
+                document.getElementById("load").click();
+            }
+        });
+    }
+
+    document.getElementById("reset").addEventListener("click", () => {
+        stop();
+        go(0);
+    });
+    document.getElementById("back").addEventListener("click", () => {
+        stop();
+        go(current - 1);
+    });
+    document.getElementById("next").addEventListener("click", () => {
+        stop();
+        go(current + 1);
+    });
+    document.getElementById("play").addEventListener("click", () => (timer ? stop() : play()));
+
+    document.addEventListener("keydown", e => {
+        if (e.target.tagName === "INPUT") {
+            return;
+        }
+        if (e.key === "ArrowRight") {
+            stop();
+            go(current + 1);
+        } else if (e.key === "ArrowLeft") {
+            stop();
+            go(current - 1);
+        } else if (e.key === " ") {
+            e.preventDefault();
+            timer ? stop() : play();
+        }
+    });
+
+    // the selected tab is kept in the URL hash, e.g. RotateArray.html#cyclic
+    selectStrategy(location.hash.slice(1));
+    load([1, 2, 3, 4, 5, 6, 7], 3);
+</script>
+</body>
+</html>
