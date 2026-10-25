@@ -1,0 +1,653 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>First Missing Positive</title>
+<link rel="icon" type="image/png" href="../../../../../../udemy.png">
+<link rel="stylesheet" href="../../visualizer.css">
+<style>
+    :root {
+        --p1: #3b6fd8;
+        --p2: #9333ea;
+        --p3: #db2777;
+        --counter: var(--p2);
+    }
+
+    @media (prefers-color-scheme: dark) {
+        :root {
+            --p1: #6d9bff;
+            --p2: #c084fc;
+            --p3: #f472b6;
+        }
+    }
+</style>
+</head>
+<body>
+<main>
+    <h1>Find the smallest missing positive integer</h1>
+    <div class="card">
+        <p>
+            Given an unsorted integer array <code>nums</code>. Return the smallest positive integer that is not
+            present in <code>nums</code>.
+        </p>
+        <p>
+            You must implement an algorithm that runs in <code>O(n)</code> time and uses <code>O(1)</code>
+            auxiliary space.
+        </p>
+    </div>
+
+    <div class="tabs" role="tablist">
+        <button class="tab" role="tab" data-strategy="bruteforce">Bruteforce</button>
+        <button class="tab" role="tab" data-strategy="extra">Extra space</button>
+        <button class="tab" role="tab" data-strategy="sign">Sign marking</button>
+    </div>
+    <p class="subtitle" id="strategy"></p>
+
+    <div class="card">
+        <div class="row">
+            <button data-example="1,2,0">Example 1</button>
+            <button data-example="3,4,-1,1">Example 2</button>
+            <button data-example="7,8,9,11,12">Example 3</button>
+            <button id="random">Random</button>
+            <input id="custom" placeholder="Custom nums, e.g. 3,4,-1,1">
+            <button id="load">Load</button>
+        </div>
+        <div class="error" id="error"></div>
+    </div>
+
+    <div class="card">
+        <svg id="chart" viewBox="0 0 800 200" role="img" aria-label="Array searched for the first missing positive"></svg>
+        <div class="row controls">
+            <button id="reset" title="Reset">⏮ Reset</button>
+            <button id="back" title="Back (←)">◀ Back</button>
+            <button id="play" class="primary" title="Play / Pause (Space)">▶ Play</button>
+            <button id="next" title="Next (→)">Next ▶</button>
+        </div>
+        <p class="muted hint">
+            Keyboard: <kbd>←</kbd> <kbd>→</kbd> step, <kbd>Space</kbd> play / pause
+        </p>
+    </div>
+
+    <div class="card">
+        <div class="grid">
+            <div class="stat">
+                <div class="label" id="label0"></div>
+                <div class="value" id="stat0">–</div>
+            </div>
+            <div class="stat">
+                <div class="label" id="label1"></div>
+                <div class="value" id="stat1">–</div>
+            </div>
+            <div class="stat">
+                <div class="label" id="label2"></div>
+                <div class="value" id="stat2">–</div>
+            </div>
+            <div class="stat">
+                <div class="label" id="counterLabel"></div>
+                <div class="value counter" id="counter">0</div>
+            </div>
+        </div>
+        <div class="message" id="message"></div>
+        <div class="result" id="result"></div>
+        <div style="margin-top: 12px">
+            <strong>Log</strong>
+            <ol id="log"></ol>
+            <div class="muted" id="noLog">Nothing done yet.</div>
+        </div>
+    </div>
+</main>
+
+<script>
+    const SVG_NS = "http://www.w3.org/2000/svg";
+    const W = 800;
+    const ROW_Y = 90;       // top of the main array row
+    const CELL_H = 52;
+    const SEEN_Y = 210;     // top of the seen row (extra space only)
+    const SEEN_H = 44;
+
+    let nums = [];
+    let strategy = "sign";
+    let steps = [];     // snapshot after each step, steps[0] = before the first action
+    let current = 0;
+    let timer = null;
+
+    // Every builder records snapshots of the same shape, so one renderer draws all strategies:
+    //   cells:     per index "active" | "found" | "missing" | "marked" | "replaced" | "done" | "faded" | ""
+    //   seen:      boolean flags 0..n (extra space only) with seenCells styled like cells
+    //   arcs:      [{ from, to, down }] arrows from a nums cell to its flag (down = into the seen row)
+    //   pointers:  [{ index, label }] under the row
+    //   answer:    the result, set in the last snapshot
+    function recorder(array) {
+        const steps = [];
+        const log = [];
+        const record = (counter, fields) => steps.push({
+            nums: [...array], log: [...log], counter,
+            cells: Array(array.length).fill(""), seen: null, seenCells: null, arcs: [], pointers: [],
+            stats: ["–", "–", "–"], color: null, answer: null,
+            ...fields
+        });
+        return { steps, log, record };
+    }
+
+    // Scan the array for 1, 2, 3, …, mirrors solution/FirstMissingPositiveBruteforce.kt.
+    function buildBruteforceSteps(input) {
+        const n = input.length;
+        const { steps, log, record } = recorder(input);
+        let comparisons = 0;
+
+        record(comparisons, {
+            message: `n = ${n}: try the candidates 1, 2, … and scan nums for each. The answer is at most n + 1 = ${n + 1}.`
+        });
+
+        for (let candidate = 1; candidate <= n; candidate++) {
+            let foundAt = -1;
+            for (let index = 0; index < n; index++) {
+                comparisons++;
+                const found = input[index] === candidate;
+                record(comparisons, {
+                    stats: [candidate, index, input[index]], color: found ? "var(--good)" : "var(--cursor)",
+                    cells: input.map((_, i) => i === index ? (found ? "found" : "active") : i < index ? "done" : "faded"),
+                    pointers: [{ index, label: "index" }],
+                    message: found
+                        ? `nums[${index}] = ${input[index]} = candidate → ${candidate} is present, try ${candidate + 1}.`
+                        : `nums[${index}] = ${input[index]} ≠ ${candidate}` +
+                            (index < n - 1 ? ", keep scanning." : `, end of the array → ${candidate} is missing.`)
+                });
+                if (found) {
+                    foundAt = index;
+                    break;
+                }
+            }
+
+            if (foundAt === -1) {
+                log.push(`Candidate ${candidate}: not in nums → answer`);
+                record(comparisons, {
+                    stats: [candidate, "–", "–"], color: "var(--good)", answer: candidate,
+                    message: `Done: ${candidate} is the smallest positive integer not in nums (${comparisons} comparisons).`
+                });
+                return steps;
+            }
+            log.push(`Candidate ${candidate}: found at index ${foundAt}`);
+        }
+
+        record(comparisons, {
+            stats: [n + 1, "–", "–"], color: "var(--good)", answer: n + 1,
+            cells: Array(n).fill("found"),
+            message: `Done: all of 1..${n} are present, so the answer is n + 1 = ${n + 1} (${comparisons} comparisons).`
+        });
+        return steps;
+    }
+
+    // Mark 1..n in a boolean array, mirrors solution/FirstMissingPositiveExtraSpace.kt.
+    function buildExtraSpaceSteps(input) {
+        const n = input.length;
+        const { steps, log, record } = recorder(input);
+        const seen = Array(n + 1).fill(false);
+        const seenCells = (active, state) => seen.map((flag, i) =>
+            i === 0 ? "faded" : i === active ? state : flag ? "marked" : "");
+        let marked = 0;
+
+        record(marked, {
+            seen: [...seen], seenCells: seenCells(-1),
+            message: `n = ${n}: only the values 1..${n} can matter, so a seen array with indices 1..${n} is enough.`
+        });
+
+        for (let index = 0; index < n; index++) {
+            const num = input[index];
+            const inRange = num > 0 && num <= n;
+            if (inRange && !seen[num]) {
+                marked++;
+            }
+            const duplicate = inRange && seen[num];
+            if (inRange) {
+                seen[num] = true;
+                log.push(`nums[${index}] = ${num} → seen[${num}] = true`);
+            }
+            record(marked, {
+                stats: ["1 · mark", index, num], color: inRange ? "var(--p2)" : "var(--cursor)",
+                cells: input.map((_, i) => i === index ? "active" : i < index ? "done" : "faded"),
+                seen: [...seen], seenCells: seenCells(inRange ? num : -1, "active"),
+                arcs: inRange ? [{ from: index, to: num, down: true }] : [],
+                pointers: [{ index, label: "index" }],
+                message: inRange
+                    ? `nums[${index}] = ${num} is in 1..${n} → set seen[${num}]` + (duplicate ? " (already set, duplicate)." : ".")
+                    : `nums[${index}] = ${num} is ${num <= 0 ? "not positive" : `greater than n = ${n}`} → skip it.`
+            });
+        }
+
+        for (let value = 1; value <= n; value++) {
+            const missing = !seen[value];
+            record(marked, {
+                stats: ["2 · scan", "–", value], color: missing ? "var(--good)" : "var(--cursor)",
+                cells: Array(n).fill("done"),
+                seen: [...seen], seenCells: seenCells(value, missing ? "missing" : "found"),
+                answer: missing ? value : null,
+                message: missing
+                    ? `Done: seen[${value}] is false → ${value} is the smallest missing positive.`
+                    : `seen[${value}] is true → ${value} is present, check ${value + 1}.`
+            });
+            if (missing) {
+                log.push(`seen[${value}] = false → answer ${value}`);
+                return steps;
+            }
+        }
+
+        log.push(`seen[1..${n}] all true → answer ${n + 1}`);
+        record(marked, {
+            stats: ["2 · scan", "–", "–"], color: "var(--good)", answer: n + 1,
+            cells: Array(n).fill("done"), seen: [...seen], seenCells: seenCells(-1),
+            message: `Done: all of 1..${n} are marked, so the answer is n + 1 = ${n + 1}.`
+        });
+        return steps;
+    }
+
+    // Use nums itself as the seen array, mirrors solution/FirstMissingPositiveSignMarking.kt.
+    function buildSignMarkingSteps(input) {
+        const n = input.length;
+        const array = [...input];
+        const { steps, log, record } = recorder(array);
+        const replaced = new Set();
+        const marked = () => array.filter(v => v < 0).length;
+        // negative = marked, replaced = was out of range; the cursor and the answer win over both
+        const cellsFor = (active, state = "active") => array.map((value, i) =>
+            i === active ? state : value < 0 ? "marked" : replaced.has(i) ? "replaced" : "");
+        let contains1 = false;
+
+        record(0, {
+            message: `n = ${n}: index i stores whether value i is present (index 0 stands for n = ${n}). ` +
+                "Phase 1 makes every value a valid index."
+        });
+
+        for (let index = 0; index < n; index++) {
+            const value = array[index];
+            if (value === 1) {
+                contains1 = true;
+            }
+            const outOfRange = value <= 0 || value > n;
+            if (outOfRange) {
+                array[index] = 1;
+                replaced.add(index);
+                log.push(`nums[${index}] = ${value} out of range → 1`);
+            }
+            record(0, {
+                stats: ["1 · clean", index, contains1 ? "yes" : "no"], color: outOfRange ? "var(--p3)" : "var(--cursor)",
+                cells: cellsFor(index).map((state, i) => i > index ? "faded" : state),
+                pointers: [{ index, label: "index" }],
+                message: outOfRange
+                    ? `nums[${index}] = ${value} is outside 1..${n} → replace it with 1, it can't change the answer.`
+                    : `nums[${index}] = ${value} is inside 1..${n} → keep it` + (value === 1 ? ", and 1 is present." : ".")
+            });
+        }
+
+        if (!contains1) {
+            log.push("1 is not in nums → answer 1");
+            record(0, {
+                stats: ["1 · clean", "–", "no"], color: "var(--good)", answer: 1,
+                cells: cellsFor(-1),
+                message: "Done: the original array has no 1, so 1 is the smallest missing positive."
+            });
+            return steps;
+        }
+
+        for (let index = 0; index < n; index++) {
+            const value = Math.abs(array[index]);
+            const target = value === n ? 0 : value;
+            const already = array[target] < 0;
+            array[target] = -Math.abs(array[target]);
+            log.push(`|nums[${index}]| = ${value} → mark index ${target}`);
+            record(marked(), {
+                stats: ["2 · mark", `${index} → ${target}`, "yes"], color: "var(--p2)",
+                cells: cellsFor(index),
+                arcs: target === index ? [] : [{ from: index, to: target }],
+                pointers: [{ index, label: "index" }],
+                message: `|nums[${index}]| = ${value}` + (value === n ? ` = n → its flag is index 0` : ` → its flag is index ${target}`) +
+                    (already ? ", already negative (duplicate)." : `, make nums[${target}] negative.`)
+            });
+        }
+
+        for (let index = 1; index < n; index++) {
+            const missing = array[index] > 0;
+            record(marked(), {
+                stats: ["3 · scan", index, "yes"], color: missing ? "var(--good)" : "var(--cursor)",
+                cells: cellsFor(index, missing ? "missing" : "active"),
+                pointers: [{ index, label: "index" }],
+                answer: missing ? index : null,
+                message: missing
+                    ? `Done: nums[${index}] = ${array[index]} is positive → ${index} was never marked, it is the answer.`
+                    : `nums[${index}] = ${array[index]} is negative → ${index} is present.`
+            });
+            if (missing) {
+                log.push(`nums[${index}] positive → answer ${index}`);
+                return steps;
+            }
+        }
+
+        // index 0 holds the flag for n
+        const answer = array[0] > 0 ? n : n + 1;
+        log.push(`nums[0] ${array[0] > 0 ? "positive" : "negative"} → answer ${answer}`);
+        record(marked(), {
+            stats: ["3 · scan", 0, "yes"], color: "var(--good)", answer,
+            cells: cellsFor(0, answer === n ? "missing" : "active"),
+            pointers: [{ index: 0, label: "index 0 = n" }],
+            message: answer === n
+                ? `Done: 1..${n - 1} are present but nums[0] is positive → n = ${n} is missing.`
+                : `Done: nums[0] is negative too → all of 1..${n} are present, the answer is n + 1 = ${n + 1}.`
+        });
+        return steps;
+    }
+
+    const STRATEGIES = {
+        bruteforce: {
+            build: buildBruteforceSteps,
+            labels: ["Candidate", "Index", "nums[index]"],
+            counter: "Comparisons",
+            description: `Strategy shown (<code>solution/FirstMissingPositiveBruteforce.kt</code>): try
+                <strong style="color: var(--cursor)">1, 2, 3, …</strong> and scan the whole array for each.
+                O(n²) time, O(1) space.`
+        },
+        extra: {
+            build: buildExtraSpaceSteps,
+            labels: ["Phase", "Index", "Value"],
+            counter: "Marked",
+            description: `Strategy shown (<code>solution/FirstMissingPositiveExtraSpace.kt</code>):
+                <strong style="color: var(--p2)">mark every value in 1..n</strong> in a seen array, then return the
+                first unmarked one. O(n) time, O(n) space.`
+        },
+        sign: {
+            build: buildSignMarkingSteps,
+            labels: ["Phase", "Index", "Contains 1"],
+            counter: "Marked",
+            description: `Strategy shown (<code>solution/FirstMissingPositiveSignMarking.kt</code>):
+                <strong style="color: var(--p3)">replace values outside 1..n with 1</strong>, then
+                <strong style="color: var(--p2)">mark value v by making nums[v] negative</strong> (nums[0] for n),
+                then the first positive index is missing. O(n) time, O(1) space.`
+        }
+    };
+
+    // Boolean array of 1..n, mirrors solution/FirstMissingPositiveExtraSpace.kt.
+    function firstMissingExtraSpace(nums) {
+        const seen = Array(nums.length + 1).fill(false);
+        nums.filter(num => num > 0 && num <= nums.length).forEach(num => {
+            seen[num] = true;
+        });
+        const value = seen.findIndex((flag, i) => i > 0 && !flag);
+        return value === -1 ? nums.length + 1 : value;
+    }
+
+    function el(name, attrs = {}, text) {
+        const node = document.createElementNS(SVG_NS, name);
+        for (const [key, value] of Object.entries(attrs)) {
+            node.setAttribute(key, value);
+        }
+        if (text !== undefined) {
+            node.textContent = text;
+        }
+        return node;
+    }
+
+    const CELL_STYLE = {
+        active: "var(--cursor)",
+        found: "var(--good)",
+        missing: "var(--bad)",
+        marked: "var(--p2)",
+        replaced: "var(--p3)",
+        done: "var(--p1)"
+    };
+
+    // one row of boxes; label(i) is drawn under each box
+    function drawRow(svg, values, states, y, h, x, cw, label) {
+        values.forEach((value, i) => {
+            const state = states[i];
+            const color = CELL_STYLE[state];
+            const opacity = state === "faded" ? 0.35 : 1;
+            const text = String(value);
+            svg.append(el("rect", {
+                x: x(i) + 3, y, width: cw - 6, height: h, rx: 6,
+                fill: color || "var(--panel)", "fill-opacity": color ? (state === "done" ? 0.1 : 0.2) : 1,
+                stroke: color || "var(--border)", "stroke-width": state === "active" || state === "missing" ? 3 : 2, opacity
+            }));
+            svg.append(el("text", {
+                x: x(i) + cw / 2, y: y + h / 2 + 6, "text-anchor": "middle",
+                "font-size": Math.min(18, (cw - 8) / (text.length * 0.62)), "font-weight": 600, fill: "var(--text)", opacity
+            }, text));
+            svg.append(el("text", {
+                x: x(i) + cw / 2, y: y + h + 16, "text-anchor": "middle", "font-size": 11, fill: "var(--muted)"
+            }, label(i)));
+        });
+    }
+
+    function renderChart(step) {
+        const svg = document.getElementById("chart");
+        svg.replaceChildren();
+        svg.setAttribute("viewBox", `0 0 ${W} ${step.seen ? 285 : 200}`);
+
+        const n = nums.length;
+        const slots = step.seen ? n + 1 : n;    // the seen row has one more cell, keep both rows aligned by index
+        const cw = Math.min(72, 720 / slots);
+        const left = (W - slots * cw) / 2;
+        const x = i => left + i * cw;              // left edge of cell i
+        const cx = i => x(i) + cw / 2;             // center of cell i
+        const below = ROW_Y + CELL_H;
+
+        // arrowhead for the marking arrows
+        const defs = el("defs");
+        const marker = el("marker", { id: "arrow", viewBox: "0 0 10 10", refX: 8, refY: 5, markerWidth: 7, markerHeight: 7, orient: "auto-start-reverse" });
+        marker.append(el("path", { d: "M0,0 L10,5 L0,10 z", fill: "var(--p2)" }));
+        defs.append(marker);
+        svg.append(defs);
+
+        // faint input row for reference
+        svg.append(el("text", { x: left - 8, y: 36, "text-anchor": "end", "font-size": 11, fill: "var(--muted)" }, "input"));
+        nums.forEach((value, i) => {
+            const text = String(value);
+            svg.append(el("rect", { x: x(i) + 3, y: 18, width: cw - 6, height: 26, rx: 4, fill: "none", stroke: "var(--border)" }));
+            svg.append(el("text", {
+                x: cx(i), y: 36, "text-anchor": "middle", "font-size": Math.min(13, (cw - 8) / (text.length * 0.62)), fill: "var(--muted)"
+            }, text));
+        });
+
+        // main array row, in sign marking index 0 is the flag for n
+        svg.append(el("text", { x: left - 8, y: ROW_Y + CELL_H / 2 + 4, "text-anchor": "end", "font-size": 11, fill: "var(--muted)" }, "nums"));
+        drawRow(svg, step.nums, step.cells, ROW_Y, CELL_H, x, cw, i => strategy === "sign" && i === 0 ? `0 (n = ${n})` : i);
+
+        // seen row, index 0 is unused
+        if (step.seen) {
+            svg.append(el("text", { x: left - 8, y: SEEN_Y + SEEN_H / 2 + 4, "text-anchor": "end", "font-size": 11, fill: "var(--muted)" }, "seen"));
+            drawRow(svg, step.seen.map((flag, i) => i === 0 ? "–" : flag ? "✓" : "·"), step.seenCells, SEEN_Y, SEEN_H, x, cw, i => i);
+        }
+
+        // arrows from a value to its flag: arcs above the row, or straight down into the seen row
+        for (const { from, to, down } of step.arcs) {
+            const d = down
+                ? `M${cx(from)},${below + 40} L${cx(to)},${SEEN_Y - 4}`
+                : `M${cx(from)},${ROW_Y - 4} Q${(cx(from) + cx(to)) / 2},${ROW_Y - 4 - Math.min(36, 14 + Math.abs(to - from) * 5) * 2} ${cx(to)},${ROW_Y - 4}`;
+            svg.append(el("path", { d, fill: "none", stroke: "var(--p2)", "stroke-width": 2.5, "marker-end": "url(#arrow)" }));
+        }
+
+        for (const { index, label } of step.pointers) {
+            svg.append(el("text", {
+                x: cx(index), y: below + 34, "text-anchor": "middle", "font-size": 12, "font-weight": 700, fill: "var(--cursor)"
+            }, `▲ ${label}`));
+        }
+    }
+
+    function render() {
+        const step = steps[current];
+        const isDone = current === steps.length - 1;
+        const config = STRATEGIES[strategy];
+
+        renderChart(step);
+
+        config.labels.forEach((label, i) => {
+            document.getElementById(`label${i}`).textContent = label;
+            document.getElementById(`stat${i}`).textContent = step.stats[i];
+        });
+        document.getElementById("counterLabel").textContent = config.counter;
+        document.getElementById("counter").textContent = step.counter;
+
+        const message = document.getElementById("message");
+        message.textContent = step.message;
+        message.style.borderLeftColor = step.color || "";
+
+        // cross-check against another approach: sign marking for the extra space tab, extra space otherwise
+        const [checkName, expected] = strategy === "extra"
+            ? ["sign marking", firstMissingSignMarking(nums)]
+            : ["extra space", firstMissingExtraSpace(nums)];
+        document.getElementById("result").textContent = isDone
+            ? `Smallest missing positive = ${step.answer} ${step.answer === expected ? "✓" : "✗"} (${checkName} cross-check: ${expected})`
+            : "";
+
+        const list = document.getElementById("log");
+        list.replaceChildren(...step.log.map(entry => {
+            const item = document.createElement("li");
+            item.textContent = entry;
+            return item;
+        }));
+        document.getElementById("noLog").style.display = step.log.length ? "none" : "block";
+
+        document.getElementById("reset").disabled = current === 0;
+        document.getElementById("back").disabled = current === 0;
+        document.getElementById("next").disabled = isDone;
+    }
+
+    // the final answer of the sign marking steps
+    function firstMissingSignMarking(nums) {
+        const steps = buildSignMarkingSteps(nums);
+        return steps[steps.length - 1].answer;
+    }
+
+    // rebuild the snapshots for the current input and strategy, start from the beginning
+    function rebuild() {
+        stop();
+        steps = STRATEGIES[strategy].build(nums);
+        current = 0;
+        render();
+    }
+
+    function load(newNums) {
+        nums = newNums;
+        document.getElementById("custom").value = nums.join(",");
+        document.getElementById("error").textContent = "";
+        rebuild();
+    }
+
+    function selectStrategy(name) {
+        strategy = STRATEGIES[name] ? name : "sign";
+        document.querySelectorAll("[data-strategy]").forEach(tab => {
+            tab.setAttribute("aria-selected", tab.dataset.strategy === strategy);
+        });
+        document.getElementById("strategy").innerHTML = STRATEGIES[strategy].description;
+        try {
+            history.replaceState(null, "", `#${strategy}`);
+        } catch (e) {
+            // some browsers block history changes for pages opened from disk, the tab still works
+        }
+    }
+
+    function go(index) {
+        current = Math.max(0, Math.min(steps.length - 1, index));
+        render();
+    }
+
+    function play() {
+        if (current === steps.length - 1) {
+            current = 0;
+        }
+        document.getElementById("play").textContent = "⏸ Pause";
+        timer = setInterval(() => {
+            if (current >= steps.length - 1) {
+                stop();
+                return;
+            }
+            go(current + 1);
+        }, 800);
+    }
+
+    function stop() {
+        clearInterval(timer);
+        timer = null;
+        document.getElementById("play").textContent = "▶ Play";
+    }
+
+    function parseCustom(text) {
+        const values = text.split(/[\s,]+/).filter(Boolean).map(Number);
+        if (values.length === 0) {
+            throw new Error("Enter at least one number.");
+        }
+        if (values.length > 16) {
+            throw new Error("Keep it to 16 numbers or fewer so the array stays readable.");
+        }
+        if (values.some(v => !Number.isInteger(v) || v < -(2 ** 31) || v > 2 ** 31 - 1)) {
+            throw new Error("Numbers must be whole numbers between -2^31 and 2^31 - 1.");
+        }
+        return values;
+    }
+
+    document.querySelectorAll("[data-strategy]").forEach(tab => {
+        tab.addEventListener("click", () => {
+            selectStrategy(tab.dataset.strategy);
+            rebuild();
+        });
+    });
+
+    document.querySelectorAll("[data-example]").forEach(button => {
+        button.addEventListener("click", () => load(button.dataset.example.split(",").map(Number)));
+    });
+
+    // mostly values around 1..n, so the answer is usually somewhere inside the array
+    document.getElementById("random").addEventListener("click", () => {
+        const length = 4 + Math.floor(Math.random() * 7);
+        load(Array.from({ length }, () => Math.floor(Math.random() * (length + 4)) - 2));
+    });
+
+    document.getElementById("load").addEventListener("click", () => {
+        try {
+            load(parseCustom(document.getElementById("custom").value));
+        } catch (e) {
+            document.getElementById("error").textContent = e.message;
+        }
+    });
+
+    document.getElementById("custom").addEventListener("keydown", e => {
+        if (e.key === "Enter") {
+            document.getElementById("load").click();
+        }
+    });
+
+    document.getElementById("reset").addEventListener("click", () => {
+        stop();
+        go(0);
+    });
+    document.getElementById("back").addEventListener("click", () => {
+        stop();
+        go(current - 1);
+    });
+    document.getElementById("next").addEventListener("click", () => {
+        stop();
+        go(current + 1);
+    });
+    document.getElementById("play").addEventListener("click", () => (timer ? stop() : play()));
+
+    document.addEventListener("keydown", e => {
+        if (e.target.tagName === "INPUT") {
+            return;
+        }
+        if (e.key === "ArrowRight") {
+            stop();
+            go(current + 1);
+        } else if (e.key === "ArrowLeft") {
+            stop();
+            go(current - 1);
+        } else if (e.key === " ") {
+            e.preventDefault();
+            timer ? stop() : play();
+        }
+    });
+
+    // the selected tab is kept in the URL hash, e.g. FirstMissingPositive.html#extra
+    selectStrategy(location.hash.slice(1));
+    load([3, 4, -1, 1]);
+</script>
+</body>
+</html>
