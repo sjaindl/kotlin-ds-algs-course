@@ -67,6 +67,21 @@ After a topic's lecture, collect its reusable techniques in `src/main/kotlin/too
   has one `@Test` per snippet with edge cases.
 - Leave out techniques that belong to a later topic (e.g. monotonic stack → stack toolbox) or only fit one problem.
 
+## Common bugs
+
+Per topic, list the bugs students typically hit in one Markdown file, `src/main/kotlin/common_bugs/<topic>/CommonBugs.md`.
+Reference: `src/main/kotlin/common_bugs/array/CommonBugs.md`.
+
+- `# Common bugs in <topic> questions`, a one-sentence intro, then one numbered `## <n>. <Title>` per bug (~10–15).
+- Each bug: a 1–2 sentence description (what goes wrong, the symptom: exception, wrong result, endless loop), an
+  optional `Seen in:` with the exact `questions/...` or `toolbox/...` files, then a **Wrong** and a **Correct**
+  `kotlin` snippet of a few lines. Keep the snippets otherwise identical so the fix stands out, and comment the
+  concrete input and output where it helps, e.g. `// [1, 2, 3] -> [3, 1, 1]`.
+- Mix classic bugs (off-by-one, empty input, overflow, min/max start values) with Kotlin pitfalls (`%` vs `.mod()`,
+  `==` on arrays, aliasing) and ones from the topic's questions (e.g. gcd cycles in rotate array).
+- Verify every snippet with a scratch `kotlinc -script` file: the wrong one shows the described bug, the correct one
+  doesn't, and the comments match the real output. Don't store the script in the repo.
+
 ## Udemy coding exercise tests
 
 Udemy runs its own Kotlin evaluator. These tests are written for copy & paste into the Udemy editor and are
