@@ -53,6 +53,20 @@ src/test/kotlin/questions/<topic>/<name>/<Name>Test.kt
 For the Udemy exercise text, write one short paragraph of what is learned (approaches compared, target
 complexity), then 4–5 "After this exercise you can …" bullets and an optional one-sentence version.
 
+## Toolbox
+
+After a topic's lecture, collect its reusable techniques in `src/main/kotlin/toolbox/<topic>/` (package
+`toolbox.<topic>`). Reference: `src/main/kotlin/toolbox/array/`.
+
+- One file per concept, e.g. `CyclicIndex.kt`, `ReverseTrick.kt`. Avoid names that clash with Kotlin types
+  (`DoubledArray.kt`, not `DoubleArray.kt`).
+- Header comment: the idea in 1–3 sentences, when to reach for it, `Seen in:` with the exact `questions/...` files,
+  Kotlin pitfalls if any, a short worked example, then `n: …` / `T: O(…)` / `S: O(…)`.
+- Then 1–3 small, generic top-level functions or extensions with a one-line comment each, not a copy of a solution.
+- `runners/<Topic>Toolbox.kt` prints a short demo per concept. `src/test/kotlin/toolbox/<topic>/<Topic>ToolboxTest.kt`
+  has one `@Test` per snippet with edge cases.
+- Leave out techniques that belong to a later topic (e.g. monotonic stack → stack toolbox) or only fit one problem.
+
 ## Udemy coding exercise tests
 
 Udemy runs its own Kotlin evaluator. These tests are written for copy & paste into the Udemy editor and are
