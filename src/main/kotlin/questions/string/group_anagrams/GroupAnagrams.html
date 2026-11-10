@@ -1,0 +1,618 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Group Anagrams</title>
+<link rel="icon" type="image/png" href="../../../../../../udemy.png">
+<link rel="stylesheet" href="../../visualizer.css">
+<style>
+    :root {
+        --p1: #3b6fd8;
+        --p2: #9333ea;
+        --counter: var(--p2);
+    }
+
+    @media (prefers-color-scheme: dark) {
+        :root {
+            --p1: #6d9bff;
+            --p2: #c084fc;
+        }
+    }
+</style>
+</head>
+<body>
+<main>
+    <h1>Group strings that are anagrams of each other</h1>
+    <div class="card">
+        <p>
+            Given an array of strings <code>strs</code>, group the anagrams together. You can return the answer in
+            any order.
+        </p>
+    </div>
+
+    <div class="tabs" role="tablist">
+        <button class="tab" role="tab" data-strategy="bruteforce">Bruteforce</button>
+        <button class="tab" role="tab" data-strategy="sorting">Sorting</button>
+        <button class="tab" role="tab" data-strategy="count">Char count</button>
+    </div>
+    <p class="subtitle" id="strategy"></p>
+
+    <div class="card">
+        <div class="row">
+            <button data-example='["eat","tea","tan","ate","nat","bat"]'>Example 1</button>
+            <button data-example='[""]'>Example 2</button>
+            <button data-example='["a"]'>Example 3</button>
+            <button id="random">Random</button>
+            <input id="custom" placeholder='Custom strs, e.g. listen,silent,dog,god,"" '>
+            <button id="load">Load</button>
+        </div>
+        <div class="error" id="error"></div>
+    </div>
+
+    <div class="card">
+        <svg id="chart" viewBox="0 0 800 300" role="img" aria-label="Strings, their keys and the groups"></svg>
+        <div class="row controls">
+            <button id="reset" title="Reset">⏮ Reset</button>
+            <button id="back" title="Back (←)">◀ Back</button>
+            <button id="play" class="primary" title="Play / Pause (Space)">▶ Play</button>
+            <button id="next" title="Next (→)">Next ▶</button>
+        </div>
+        <p class="muted hint">
+            Keyboard: <kbd>←</kbd> <kbd>→</kbd> step, <kbd>Space</kbd> play / pause
+        </p>
+    </div>
+
+    <div class="card">
+        <div class="grid">
+            <div class="stat">
+                <div class="label" id="label0"></div>
+                <div class="value" id="stat0">–</div>
+            </div>
+            <div class="stat">
+                <div class="label" id="label1"></div>
+                <div class="value" id="stat1">–</div>
+            </div>
+            <div class="stat">
+                <div class="label" id="label2"></div>
+                <div class="value" id="stat2">–</div>
+            </div>
+            <div class="stat">
+                <div class="label">Groups</div>
+                <div class="value counter" id="counter">0</div>
+            </div>
+        </div>
+        <div class="message" id="message"></div>
+        <div class="result" id="result"></div>
+        <div style="margin-top: 12px">
+            <strong>Log</strong>
+            <ol id="log"></ol>
+            <div class="muted" id="noLog">Nothing done yet.</div>
+        </div>
+    </div>
+</main>
+
+<script>
+    const SVG_NS = "http://www.w3.org/2000/svg";
+    const W = 800;
+    const TOP = 50;         // first row below the column headings
+    const ROW = 36;         // row height of the strs column
+    const CHIP_H = 26;
+    const STRS_X = 20;
+    const KEY_X = 215;
+    const KEY_W = 205;
+    const MAP_X = 450;
+    const MAP_W = W - MAP_X - 15;
+
+    let strs = [];
+    let strategy = "count";
+    let steps = [];     // snapshot after each step, steps[0] = before the first string
+    let current = 0;
+    let timer = null;
+
+    const quote = s => `"${s}"`;
+    const groupText = items => `[${items.map(quote).join(", ")}]`;
+
+    // key of solution/GroupAnagramsSorting.kt: the letters sorted
+    const sortKey = s => [...s].sort().join("");
+
+    // key of solution/GroupAnagramsCharCount.kt: the 26 counts, written compactly as "a1 e1 t1" (zeros left out)
+    function countKey(s) {
+        const counts = Array(26).fill(0);
+        for (const char of s) {
+            counts[char.charCodeAt(0) - 97]++;
+        }
+        return counts.map((count, i) => count ? String.fromCharCode(97 + i) + count : "").filter(Boolean).join(" ");
+    }
+
+    // Every builder records snapshots of the same shape, so one renderer draws all strategies:
+    //   strStates: per string "current" | "done" | "" (not reached yet)
+    //   cur:       index of the current string, key: text in the key box (null = none)
+    //   groups:    [{ label, items }] the map / list of groups so far
+    //   target:    { group, kind } connector from the key box to a group, kind "new" | "append" | "match" | "miss"
+    //   added:     { group, item } the chip added in this step
+    function recorder(groups) {
+        const steps = [];
+        const log = [];
+        const record = fields => {
+            steps.push({
+                groups: groups.map(g => ({ label: g.label, items: [...g.items] })), log: [...log],
+                strStates: [], cur: null, key: null, target: null, added: null, stats: ["–", "–", "–"], color: null,
+                counter: groups.length,
+                ...fields
+            });
+        };
+        return { steps, log, record };
+    }
+
+    const statesFor = (n, i) => Array.from({ length: n }, (_, j) => j < i ? "done" : j === i ? "current" : "");
+
+    // Compare with the first string of every group, mirrors solution/GroupAnagramsBruteforce.kt.
+    function buildBruteforceSteps(strs) {
+        const groups = [];
+        const { steps, log, record } = recorder(groups);
+        const isAnagram = (a, b) => a.length === b.length && sortKey(a) === sortKey(b);
+        let comparisons = 0;
+
+        record({ message: "Take the strings one by one and compare each with the first string of every group so far." });
+
+        strs.forEach((str, i) => {
+            const base = { strStates: statesFor(strs.length, i), cur: i };
+            let match = -1;
+            for (let g = 0; g < groups.length; g++) {
+                const head = groups[g].items[0];
+                const same = isAnagram(head, str);
+                comparisons++;
+                record({
+                    ...base, key: `vs ${quote(head)} ${same ? "✓" : "✗"}`, target: { group: g, kind: same ? "match" : "miss" },
+                    stats: [i, quote(str), comparisons], color: same ? "var(--good)" : "var(--bad)",
+                    message: same
+                        ? `${quote(str)} is an anagram of ${quote(head)}, the first string of group ${g + 1}.`
+                        : head.length !== str.length
+                            ? `${quote(str)} and ${quote(head)} have different lengths → not anagrams.`
+                            : `${quote(str)} and ${quote(head)} don't have the same letter counts → not anagrams.`
+                });
+                if (same) {
+                    match = g;
+                    break;
+                }
+            }
+
+            if (match >= 0) {
+                groups[match].items.push(str);
+                log.push(`${quote(str)} → group ${match + 1} ${groupText(groups[match].items)}`);
+                record({
+                    ...base, key: `vs ${quote(groups[match].items[0])} ✓`, target: { group: match, kind: "append" },
+                    added: { group: match, item: groups[match].items.length - 1 },
+                    stats: [i, quote(str), comparisons], color: "var(--cursor)",
+                    message: `Append ${quote(str)} to group ${match + 1} and stop comparing.`
+                });
+            } else {
+                groups.push({ label: `group ${groups.length + 1}`, items: [str] });
+                const g = groups.length - 1;
+                log.push(`${quote(str)} → new group ${g + 1}`);
+                record({
+                    ...base, key: groups.length > 1 ? "no match" : "no groups yet", target: { group: g, kind: "new" },
+                    added: { group: g, item: 0 }, stats: [i, quote(str), comparisons], color: "var(--cursor)",
+                    message: `No group matches ${quote(str)} → it starts group ${g + 1}.`
+                });
+            }
+        });
+
+        record({
+            strStates: statesFor(strs.length, strs.length), stats: ["done", "–", comparisons], color: "var(--good)",
+            message: `Done: ${groups.length} group${groups.length === 1 ? "" : "s"} after ${comparisons} comparison${comparisons === 1 ? "" : "s"}. ` +
+                "With many different groups every string is compared with up to n heads, so O(n² · k)."
+        });
+        return steps;
+    }
+
+    // Shared by the two hash map strategies, they only differ in how the key is built.
+    function buildHashSteps(strs, keyOf, describe, showKey, done) {
+        const groups = [];
+        const byKey = new Map();    // key → index in groups
+        const { steps, log, record } = recorder(groups);
+
+        record({ message: "Build a key for every string that is equal for anagrams, and group the strings by key in a hash map." });
+
+        strs.forEach((str, i) => {
+            const key = keyOf(str);
+            const base = { strStates: statesFor(strs.length, i), cur: i, key: showKey(key), stats: [i, quote(str), showKey(key)] };
+            record({ ...base, color: "var(--p1)", message: describe(str, key) });
+
+            let g = byKey.get(key);
+            if (g === undefined) {
+                g = groups.length;
+                byKey.set(key, g);
+                groups.push({ label: showKey(key), items: [str] });
+                log.push(`${quote(str)} → new key ${showKey(key)}`);
+                record({
+                    ...base, target: { group: g, kind: "new" }, added: { group: g, item: 0 }, color: "var(--cursor)",
+                    message: `Key ${showKey(key)} is not in the map yet → start a new group [${quote(str)}].`
+                });
+            } else {
+                groups[g].items.push(str);
+                log.push(`${quote(str)} → key ${showKey(key)} ${groupText(groups[g].items)}`);
+                record({
+                    ...base, target: { group: g, kind: "append" }, added: { group: g, item: groups[g].items.length - 1 },
+                    color: "var(--cursor)",
+                    message: `Key ${showKey(key)} is already in the map → append ${quote(str)}, one O(1) lookup instead of comparing with every group.`
+                });
+            }
+        });
+
+        record({
+            strStates: statesFor(strs.length, strs.length), color: "var(--good)",
+            message: `Done: ${groups.length} group${groups.length === 1 ? "" : "s"}, the result is the values of the map. ${done}`
+        });
+        return steps;
+    }
+
+    // Sorted letters as key, mirrors solution/GroupAnagramsSorting.kt.
+    function buildSortingSteps(strs) {
+        return buildHashSteps(strs, sortKey,
+            (str, key) => `Sort the letters of ${quote(str)} → key ${quote(key)}.`,
+            quote,
+            "Sorting each string costs O(k log k), so O(n · k log k) in total.");
+    }
+
+    // Letter counts as key, mirrors solution/GroupAnagramsCharCount.kt.
+    function buildCountSteps(strs) {
+        const show = key => key === "" ? "(all 0)" : `[${key}]`;
+        return buildHashSteps(strs, countKey,
+            (str, key) => str === ""
+                ? `Count the letters of "": all 26 counts are 0 → key ${show(key)}.`
+                : `Count the letters of ${quote(str)}: ${key} (the other counts are 0) → key ${show(key)}.`,
+            show,
+            "Counting each string costs O(k), so O(n · k) in total.");
+    }
+
+    const STRATEGIES = {
+        bruteforce: {
+            build: buildBruteforceSteps,
+            labels: ["String i", "Current", "Comparisons"],
+            check: "count",
+            description: `Strategy shown (<code>solution/GroupAnagramsBruteforce.kt</code>): compare every string with the
+                <strong style="color: var(--p2)">first string of each group</strong> so far (same length and letter
+                counts); no match starts a new group. O(n² · k) time, O(n · k) space.`
+        },
+        sorting: {
+            build: buildSortingSteps,
+            labels: ["String i", "Current", "Key"],
+            check: "count",
+            description: `Strategy shown (<code>solution/GroupAnagramsSorting.kt</code>): the
+                <strong style="color: var(--p1)">sorted letters</strong> are the same for all anagrams, so use them as key of a
+                <strong style="color: var(--p2)">hash map</strong> from key to group. O(n · k log k) time, O(n · k) space.`
+        },
+        count: {
+            build: buildCountSteps,
+            labels: ["String i", "Current", "Key"],
+            check: "sorting",
+            description: `Strategy shown (<code>solution/GroupAnagramsCharCount.kt</code>): the
+                <strong style="color: var(--p1)">26 letter counts</strong> are the same for all anagrams, so use them as key of a
+                <strong style="color: var(--p2)">hash map</strong> from key to group. O(n · k) time, O(n · k) space.`
+        }
+    };
+
+    function el(name, attrs = {}, text) {
+        const node = document.createElementNS(SVG_NS, name);
+        for (const [key, value] of Object.entries(attrs)) {
+            node.setAttribute(key, value);
+        }
+        if (text !== undefined) {
+            node.textContent = text;
+        }
+        return node;
+    }
+
+    const chipWidth = text => 14 + Math.max(2, text.length) * 8.4;
+
+    // position every group box and its chips, chips wrap to the next line when the box is full
+    function layoutGroups(groups) {
+        let y = TOP;
+        return groups.map(group => {
+            const chips = [];
+            let x = MAP_X + 10;
+            let line = 0;
+            for (const item of group.items) {
+                const w = chipWidth(quote(item));
+                if (x + w > MAP_X + MAP_W - 10 && x > MAP_X + 10) {
+                    x = MAP_X + 10;
+                    line++;
+                }
+                chips.push({ x, y: y + 22 + line * (CHIP_H + 6), w });
+                x += w + 6;
+            }
+            const box = { y, h: 30 + (line + 1) * (CHIP_H + 6), chips };
+            y += box.h + 8;
+            return box;
+        });
+    }
+
+    // the chart keeps the height of the last step, so it doesn't jump while stepping
+    function chartHeight() {
+        const last = steps[steps.length - 1];
+        const boxes = layoutGroups(last.groups);
+        const mapBottom = boxes.length ? boxes[boxes.length - 1].y + boxes[boxes.length - 1].h : TOP;
+        return Math.max(TOP + strs.length * ROW, mapBottom) + 12;
+    }
+
+    function chip(svg, x, y, w, text, { fill = "var(--panel)", fillOpacity = 1, stroke = "var(--border)", width = 2, opacity = 1 } = {}) {
+        svg.append(el("rect", {
+            x, y, width: w, height: CHIP_H, rx: 6, fill, "fill-opacity": fillOpacity, stroke, "stroke-width": width, opacity
+        }));
+        svg.append(el("text", {
+            x: x + w / 2, y: y + CHIP_H / 2 + 5, "text-anchor": "middle", "font-family": "ui-monospace, monospace",
+            "font-size": 14, fill: "var(--text)", opacity
+        }, text));
+    }
+
+    function renderChart(step) {
+        const svg = document.getElementById("chart");
+        svg.replaceChildren();
+        svg.setAttribute("viewBox", `0 0 ${W} ${chartHeight()}`);
+
+        const heading = (x, text) => svg.append(el("text", { x, y: 30, "font-size": 13, "font-weight": 600, fill: "var(--muted)" }, text));
+        heading(STRS_X, "strs");
+        heading(KEY_X, strategy === "bruteforce" ? "compare" : "key");
+        heading(MAP_X, strategy === "bruteforce" ? "groups" : "map: key → group");
+
+        // strs column, the current string highlighted, the ones not reached yet faded
+        const rowY = i => TOP + i * ROW;
+        strs.forEach((str, i) => {
+            const state = step.strStates[i];
+            const style = state === "current"
+                ? { fill: "var(--p1)", fillOpacity: 0.18, stroke: "var(--p1)", width: 3 }
+                : state === "done" ? { fill: "var(--muted)", fillOpacity: 0.12 } : { opacity: 0.35 };
+            chip(svg, STRS_X, rowY(i), chipWidth(quote(str)), quote(str), style);
+        });
+
+        // groups with their chips
+        const boxes = layoutGroups(step.groups);
+        const targetColor = { new: "var(--cursor)", append: "var(--cursor)", match: "var(--good)", miss: "var(--bad)" };
+        step.groups.forEach((group, g) => {
+            const box = boxes[g];
+            const isTarget = step.target && step.target.group === g;
+            svg.append(el("rect", {
+                x: MAP_X, y: box.y, width: MAP_W, height: box.h, rx: 8, fill: "var(--p2)", "fill-opacity": 0.06,
+                stroke: isTarget ? targetColor[step.target.kind] : "var(--p2)", "stroke-width": isTarget ? 3 : 1.2,
+                "stroke-opacity": isTarget ? 1 : 0.5
+            }));
+            svg.append(el("text", {
+                x: MAP_X + 10, y: box.y + 15, "font-family": "ui-monospace, monospace", "font-size": 12, "font-weight": 600,
+                fill: "var(--p2)"
+            }, group.label));
+            group.items.forEach((item, j) => {
+                const { x, y, w } = box.chips[j];
+                const isAdded = step.added && step.added.group === g && step.added.item === j;
+                const isHead = strategy === "bruteforce" && isTarget && j === 0 && step.target.kind !== "new";
+                const style = isAdded
+                    ? { fill: "var(--cursor)", fillOpacity: 0.25, stroke: "var(--cursor)", width: 3 }
+                    : isHead ? { stroke: targetColor[step.target.kind], width: 3 } : {};
+                chip(svg, x, y, w, quote(item), style);
+            });
+        });
+
+        // key box next to the current string, connected to the group it leads to
+        if (step.cur !== null && step.key !== null) {
+            const y = rowY(step.cur);
+            const color = step.target ? targetColor[step.target.kind] : "var(--p1)";
+            const fontSize = Math.min(14, (KEY_W - 12) / (step.key.length * 0.62));
+            svg.append(el("line", {
+                x1: STRS_X + chipWidth(quote(strs[step.cur])) + 4, y1: y + CHIP_H / 2, x2: KEY_X - 4, y2: y + CHIP_H / 2,
+                stroke: "var(--p1)", "stroke-width": 2
+            }));
+            svg.append(el("rect", {
+                x: KEY_X, y, width: KEY_W, height: CHIP_H, rx: 6, fill: color, "fill-opacity": 0.12, stroke: color, "stroke-width": 2
+            }));
+            svg.append(el("text", {
+                x: KEY_X + KEY_W / 2, y: y + CHIP_H / 2 + 5, "text-anchor": "middle", "font-family": "ui-monospace, monospace",
+                "font-size": fontSize, "font-weight": 600, fill: "var(--text)"
+            }, step.key));
+
+            if (step.target) {
+                const box = boxes[step.target.group];
+                const y1 = y + CHIP_H / 2;
+                const y2 = box.y + Math.min(box.h / 2, 34);
+                svg.append(el("path", {
+                    d: `M${KEY_X + KEY_W},${y1} C${MAP_X - 10},${y1} ${KEY_X + KEY_W + 10},${y2} ${MAP_X},${y2}`,
+                    fill: "none", stroke: color, "stroke-width": 2.5, ...(step.target.kind === "miss" ? { "stroke-dasharray": "5 4" } : {})
+                }));
+            }
+        }
+    }
+
+    // groups in a fixed order (each sorted, then by their text), so two results can be compared
+    const normalize = groups => groups.map(items => [...items].sort()).map(groupText).sort();
+
+    function render() {
+        const step = steps[current];
+        const isDone = current === steps.length - 1;
+        const config = STRATEGIES[strategy];
+
+        renderChart(step);
+
+        config.labels.forEach((label, i) => {
+            document.getElementById(`label${i}`).textContent = label;
+            document.getElementById(`stat${i}`).textContent = step.stats[i];
+        });
+        document.getElementById("counter").textContent = step.counter;
+
+        const message = document.getElementById("message");
+        message.textContent = step.message;
+        message.style.borderLeftColor = step.color || "";
+
+        // cross-check with the final groups of another strategy, the order of the groups doesn't matter
+        let resultText = "";
+        if (isDone) {
+            const checkSteps = STRATEGIES[config.check].build(strs);
+            const expected = normalize(checkSteps[checkSteps.length - 1].groups.map(g => g.items));
+            const actual = normalize(step.groups.map(g => g.items));
+            const matches = actual.join() === expected.join();
+            const checkName = document.querySelector(`[data-strategy="${config.check}"]`).textContent.toLowerCase();
+            resultText = `Result = [${step.groups.map(g => groupText(g.items)).join(", ")}] ${matches ? "✓" : "✗"} ` +
+                `(${checkName} cross-check: ${matches ? "same groups" : `[${expected.join(", ")}]`})`;
+        }
+        document.getElementById("result").textContent = resultText;
+
+        const list = document.getElementById("log");
+        list.replaceChildren(...step.log.map(entry => {
+            const item = document.createElement("li");
+            item.textContent = entry;
+            return item;
+        }));
+        document.getElementById("noLog").style.display = step.log.length ? "none" : "block";
+
+        document.getElementById("reset").disabled = current === 0;
+        document.getElementById("back").disabled = current === 0;
+        document.getElementById("next").disabled = isDone;
+    }
+
+    // rebuild the snapshots for the current input and strategy, start from the beginning
+    function rebuild() {
+        stop();
+        steps = STRATEGIES[strategy].build(strs);
+        current = 0;
+        render();
+    }
+
+    function load(newStrs) {
+        strs = newStrs;
+        // an empty string is written as "" so it survives the round trip through the text field
+        document.getElementById("custom").value = strs.map(s => s === "" ? '""' : s).join(",");
+        document.getElementById("error").textContent = "";
+        rebuild();
+    }
+
+    function selectStrategy(name) {
+        strategy = STRATEGIES[name] ? name : "count";
+        document.querySelectorAll("[data-strategy]").forEach(tab => {
+            tab.setAttribute("aria-selected", tab.dataset.strategy === strategy);
+        });
+        document.getElementById("strategy").innerHTML = STRATEGIES[strategy].description;
+        try {
+            history.replaceState(null, "", `#${strategy}`);
+        } catch (e) {
+            // some browsers block history changes for pages opened from disk, the tab still works
+        }
+    }
+
+    function go(index) {
+        current = Math.max(0, Math.min(steps.length - 1, index));
+        render();
+    }
+
+    function play() {
+        if (current === steps.length - 1) {
+            current = 0;
+        }
+        document.getElementById("play").textContent = "⏸ Pause";
+        timer = setInterval(() => {
+            if (current >= steps.length - 1) {
+                stop();
+                return;
+            }
+            go(current + 1);
+        }, 800);
+    }
+
+    function stop() {
+        clearInterval(timer);
+        timer = null;
+        document.getElementById("play").textContent = "▶ Play";
+    }
+
+    // comma separated, quotes around a string are optional, "" (or nothing between two commas) is the empty string
+    function parseCustom(text) {
+        if (text.trim() === "") {
+            throw new Error("Enter at least one string.");
+        }
+        const values = text.split(",").map(s => s.trim().replace(/^"(.*)"$/, "$1"));
+        if (values.length > 12) {
+            throw new Error("Keep it to 12 strings or fewer so the groups stay readable.");
+        }
+        if (values.some(s => !/^[a-z]*$/.test(s))) {
+            throw new Error("Strings may only contain lowercase English letters a–z.");
+        }
+        if (values.some(s => s.length > 10)) {
+            throw new Error("Keep every string to 10 letters or fewer so it fits on the chart.");
+        }
+        return values;
+    }
+
+    // a few anagram families for the random input
+    const FAMILIES = [
+        ["eat", "tea", "ate", "eta"], ["tan", "nat", "ant"], ["bat", "tab"], ["listen", "silent", "enlist"],
+        ["dusty", "study"], ["night", "thing"], ["act", "cat"], ["dog", "god"], ["stop", "pots", "tops", "spot"],
+        ["evil", "vile", "live"], ["a"], [""]
+    ];
+
+    function randomStrs() {
+        const families = [...FAMILIES].sort(() => Math.random() - 0.5).slice(0, 3 + Math.floor(Math.random() * 2));
+        const words = families.flatMap(family => family.slice(0, 1 + Math.floor(Math.random() * family.length)));
+        return words.sort(() => Math.random() - 0.5);
+    }
+
+    document.querySelectorAll("[data-strategy]").forEach(tab => {
+        tab.addEventListener("click", () => {
+            selectStrategy(tab.dataset.strategy);
+            rebuild();
+        });
+    });
+
+    document.querySelectorAll("[data-example]").forEach(button => {
+        button.addEventListener("click", () => load(JSON.parse(button.dataset.example)));
+    });
+
+    document.getElementById("random").addEventListener("click", () => load(randomStrs()));
+
+    document.getElementById("load").addEventListener("click", () => {
+        try {
+            load(parseCustom(document.getElementById("custom").value));
+        } catch (e) {
+            document.getElementById("error").textContent = e.message;
+        }
+    });
+
+    document.getElementById("custom").addEventListener("keydown", e => {
+        if (e.key === "Enter") {
+            document.getElementById("load").click();
+        }
+    });
+
+    document.getElementById("reset").addEventListener("click", () => {
+        stop();
+        go(0);
+    });
+    document.getElementById("back").addEventListener("click", () => {
+        stop();
+        go(current - 1);
+    });
+    document.getElementById("next").addEventListener("click", () => {
+        stop();
+        go(current + 1);
+    });
+    document.getElementById("play").addEventListener("click", () => (timer ? stop() : play()));
+
+    document.addEventListener("keydown", e => {
+        if (e.target.tagName === "INPUT") {
+            return;
+        }
+        if (e.key === "ArrowRight") {
+            stop();
+            go(current + 1);
+        } else if (e.key === "ArrowLeft") {
+            stop();
+            go(current - 1);
+        } else if (e.key === " ") {
+            e.preventDefault();
+            timer ? stop() : play();
+        }
+    });
+
+    // the selected tab is kept in the URL hash, e.g. GroupAnagrams.html#bruteforce
+    selectStrategy(location.hash.slice(1));
+    load(["eat", "tea", "tan", "ate", "nat", "bat"]);
+</script>
+</body>
+</html>
