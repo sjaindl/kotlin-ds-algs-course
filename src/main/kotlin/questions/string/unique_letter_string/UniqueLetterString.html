@@ -1,0 +1,565 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Unique Letter String</title>
+<link rel="icon" type="image/png" href="../../../../../../udemy.png">
+<link rel="stylesheet" href="../../visualizer.css">
+<style>
+    :root {
+        --p1: #3b6fd8;
+        --p2: #9333ea;
+        --counter: var(--p2);
+    }
+
+    @media (prefers-color-scheme: dark) {
+        :root {
+            --p1: #6d9bff;
+            --p2: #c084fc;
+        }
+    }
+</style>
+</head>
+<body>
+<main>
+    <h1>Count the unique characters of all substrings</h1>
+    <div class="card">
+        <p>
+            Let's define a function <code>countUniqueChars(s)</code> that returns the number of unique characters in
+            <code>s</code>.
+        </p>
+        <p>
+            For example, calling <code>countUniqueChars(s)</code> if <code>s = "LEETCODE"</code> then <code>"L"</code>,
+            <code>"T"</code>, <code>"C"</code>, <code>"O"</code>, <code>"D"</code> are the unique characters since they
+            appear only once in <code>s</code>, therefore <code>countUniqueChars(s) = 5</code>.
+        </p>
+        <p>
+            Given a string <code>s</code>, return the sum of <code>countUniqueChars(t)</code> where <code>t</code> is a
+            substring of <code>s</code>. The test cases are generated such that the answer fits in a 32-bit integer.
+        </p>
+        <p>Notice that some substrings can be repeated so in this case you have to count the repeated ones too.</p>
+    </div>
+
+    <div class="tabs" role="tablist">
+        <button class="tab" role="tab" data-strategy="bruteforce">Bruteforce</button>
+        <button class="tab" role="tab" data-strategy="next">Next occurrences</button>
+        <button class="tab" role="tab" data-strategy="split">Char split</button>
+    </div>
+    <p class="subtitle" id="strategy"></p>
+
+    <div class="card">
+        <div class="row">
+            <button data-example="ABC">Example 1</button>
+            <button data-example="ABA">Example 2</button>
+            <button data-example="LEETCODE">Example 3</button>
+            <button id="random">Random</button>
+            <input id="custom" placeholder="Custom s, e.g. ABAB">
+            <button id="load">Load</button>
+        </div>
+        <div class="error" id="error"></div>
+    </div>
+
+    <div class="card">
+        <svg id="chart" viewBox="0 0 800 210" role="img" aria-label="The string with the substrings and occurrences of the current step"></svg>
+        <div class="row controls">
+            <button id="reset" title="Reset">⏮ Reset</button>
+            <button id="back" title="Back (←)">◀ Back</button>
+            <button id="play" class="primary" title="Play / Pause (Space)">▶ Play</button>
+            <button id="next" title="Next (→)">Next ▶</button>
+        </div>
+        <p class="muted hint">
+            Keyboard: <kbd>←</kbd> <kbd>→</kbd> step, <kbd>Space</kbd> play / pause
+        </p>
+    </div>
+
+    <div class="card">
+        <div class="grid">
+            <div class="stat">
+                <div class="label" id="label0"></div>
+                <div class="value" id="stat0">–</div>
+            </div>
+            <div class="stat">
+                <div class="label" id="label1"></div>
+                <div class="value" id="stat1">–</div>
+            </div>
+            <div class="stat">
+                <div class="label">Added</div>
+                <div class="value" id="stat2">–</div>
+            </div>
+            <div class="stat">
+                <div class="label">Sum</div>
+                <div class="value counter" id="counter">0</div>
+            </div>
+        </div>
+        <div class="message" id="message"></div>
+        <div class="result" id="result"></div>
+        <div style="margin-top: 12px">
+            <strong>Log</strong>
+            <ol id="log"></ol>
+            <div class="muted" id="noLog">Nothing done yet.</div>
+        </div>
+    </div>
+</main>
+
+<script>
+    const SVG_NS = "http://www.w3.org/2000/svg";
+    const W = 800;
+    const CELLS_Y = 52;
+    const CELL_H = 44;
+    const H = 215;
+
+    let s = "";
+    let strategy = "split";
+    let steps = [];     // snapshot after each step, steps[0] = before the first action
+    let current = 0;
+    let timer = null;
+
+    // Every builder records snapshots of the same shape, so one renderer draws all strategies:
+    //   cells:    per index of s "unique" | "repeat" | "current" | "same" | "faded" | ""
+    //   spans:    [{ from, to, label, color, below }] brackets over (or under) the cells from..to, may use -1 and n
+    //   pointers: [{ index, label, color }] under the cells, index may be -1 or n (the sentinels)
+    function recorder(n) {
+        const steps = [];
+        const log = [];
+        const record = (sum, fields) => {
+            steps.push({
+                log: [...log], sum, cells: Array(n).fill(""), spans: [], pointers: [], stats: ["–", "–", "–"], color: null,
+                ...fields
+            });
+        };
+        return { steps, log, record };
+    }
+
+    const quote = t => `"${t}"`;
+
+    // Every substring, counted with a map, mirrors solution/UniqueLetterStringBruteforce.kt.
+    function buildBruteforceSteps(s) {
+        const n = s.length;
+        const { steps, log, record } = recorder(n);
+        let sum = 0;
+        record(sum, { message: `Check all ${n * (n + 1) / 2} substrings one by one and count the characters that occur exactly once.` });
+
+        for (let i = 0; i < n; i++) {
+            for (let j = i; j < n; j++) {
+                const t = s.slice(i, j + 1);
+                const counts = {};
+                for (const char of t) {
+                    counts[char] = (counts[char] || 0) + 1;
+                }
+                const unique = Object.keys(counts).filter(char => counts[char] === 1);
+                sum += unique.length;
+                log.push(`${quote(t)}: +${unique.length}`);
+                record(sum, {
+                    cells: [...s].map((char, k) => k < i || k > j ? "faded" : counts[char] === 1 ? "unique" : "repeat"),
+                    spans: [{ from: i, to: j, label: `s[${i}..${j}]`, color: "var(--p1)" }],
+                    stats: [`[${i}, ${j}]`, quote(t), `+${unique.length}`], color: unique.length ? "var(--good)" : "var(--bad)",
+                    message: `${quote(t)}: ` + (unique.length
+                        ? `${unique.map(c => `'${c}'`).join(", ")} occur${unique.length === 1 ? "s" : ""} once → +${unique.length}.`
+                        : "every character repeats → +0.") +
+                        (Object.keys(counts).length > unique.length ? ` (red: occurs more than once)` : "")
+                });
+            }
+        }
+
+        record(sum, {
+            stats: ["done", "–", "–"], color: "var(--good)",
+            message: `Done: ${n * (n + 1) / 2} substrings with ${n * (n + 1) * (n + 2) / 6} characters in total were built and checked. O(n³) time and memory.`
+        });
+        return steps;
+    }
+
+    // For every start, every character adds next2 - next1, mirrors solution/UniqueLetterStringNextOccurrences.kt.
+    function buildNextSteps(s) {
+        const n = s.length;
+        const { steps, log, record } = recorder(n);
+        const queues = new Map();     // character → its remaining indices, plus the sentinels n, n
+        [...s].forEach((char, i) => {
+            if (!queues.has(char)) {
+                queues.set(char, []);
+            }
+            queues.get(char).push(i);
+        });
+        for (const queue of queues.values()) {
+            queue.push(n, n);
+        }
+        const queueText = queue => `[${queue.map(v => v === n ? "n" : v).join(", ")}]`;
+        let sum = 0;
+
+        record(sum, {
+            message: `Queues of indices with two sentinels n = ${n}: ` +
+                [...queues].map(([char, queue]) => `${char} ${queueText(queue)}`).join(", ") + "."
+        });
+
+        for (let start = 0; start < n; start++) {
+            let added = 0;
+            for (const [char, queue] of queues) {
+                const [next1, next2] = queue;
+                const distance = next2 - next1;
+                if (distance === 0) {
+                    continue;   // no occurrence left at or after start, adds 0
+                }
+                added += distance;
+                sum += distance;
+                record(sum, {
+                    cells: [...s].map((c, k) => k < start ? "faded" : k === next1 ? "unique" : c === char && k > next1 ? "repeat" : ""),
+                    spans: [
+                        { from: start, to: n - 1, label: `substrings start at ${start}`, color: "var(--p1)" },
+                        { from: next1, to: next2 - 1, label: `${distance} end${distance === 1 ? "" : "s"} with '${char}' unique`, color: "var(--good)", below: true }
+                    ],
+                    pointers: [{ index: start, label: "start", color: "var(--p1)" }, { index: next1, label: "next1", color: "var(--good)" },
+                        { index: next2, label: "next2", color: "var(--bad)" }],
+                    stats: [start, `'${char}'`, `+${distance}`], color: "var(--good)",
+                    message: `Start ${start}, '${char}': next occurrences ${next1} and ${next2 === n ? "n" : next2} → the substrings ending at ` +
+                        `${next1}..${next2 - 1} contain '${char}' once → +${next2} - ${next1} = ${distance}.`
+                });
+            }
+
+            const queue = queues.get(s[start]);
+            queue.shift();
+            log.push(`Start ${start}: +${added}, remove ${start} from ${s[start]}'s queue`);
+            record(sum, {
+                cells: [...s].map((_, k) => k <= start ? "faded" : ""),
+                pointers: [{ index: start, label: "start", color: "var(--p1)" }],
+                stats: [start, `'${s[start]}'`, `+${added}`], color: "var(--cursor)",
+                message: `Start ${start} adds ${added} in total. Remove ${start} from the head of ${s[start]}'s queue → ` +
+                    `${queueText(queue)}, the next start can't use it anymore.`
+            });
+        }
+
+        record(sum, {
+            cells: Array(n).fill("faded"), stats: ["done", "–", "–"], color: "var(--good)",
+            message: `Done: n starts × k = ${queues.size} characters, O(n · k) = O(n) because k ≤ 26.`
+        });
+        return steps;
+    }
+
+    // Every occurrence adds (index - prev) * (next - index), mirrors solution/UniqueLetterStringCharSplit.kt.
+    function buildSplitSteps(s) {
+        const n = s.length;
+        const { steps, log, record } = recorder(n);
+        const indexMap = new Map();
+        [...s].forEach((char, i) => {
+            if (!indexMap.has(char)) {
+                indexMap.set(char, []);
+            }
+            indexMap.get(char).push(i);
+        });
+        let sum = 0;
+
+        record(sum, {
+            message: "For every occurrence, count the substrings in which it is the only copy of its character: " +
+                "they start after the previous occurrence and end before the next one."
+        });
+
+        for (const [char, list] of indexMap) {
+            list.forEach((index, p) => {
+                const prev = p === 0 ? -1 : list[p - 1];
+                const next = p === list.length - 1 ? n : list[p + 1];
+                const left = index - prev;
+                const right = next - index;
+                sum += left * right;
+                log.push(`'${char}' at ${index}: ${left} × ${right} = ${left * right}`);
+                record(sum, {
+                    cells: [...s].map((c, k) => k === index ? "unique" : c === char ? "repeat" : k <= prev || k >= next ? "faded" : ""),
+                    spans: [
+                        { from: prev + 1, to: index, label: `${left} start${left === 1 ? "" : "s"}`, color: "var(--p1)" },
+                        { from: index, to: next - 1, label: `${right} end${right === 1 ? "" : "s"}`, color: "var(--p2)", below: true }
+                    ],
+                    pointers: [{ index: prev, label: "prev", color: "var(--bad)" }, { index, label: "i", color: "var(--good)" },
+                        { index: next, label: "next", color: "var(--bad)" }],
+                    stats: [index, `'${char}'`, `+${left * right}`], color: "var(--good)",
+                    message: `'${char}' at ${index}: prev = ${prev}, next = ${next === n ? "n = " + n : next}. Start at ${prev + 1}..${index} ` +
+                        `(${index} - ${prev} = ${left}) and end at ${index}..${next - 1} (${next} - ${index} = ${right}) → +${left} × ${right} = ${left * right}.`
+                });
+            });
+        }
+
+        record(sum, {
+            stats: ["done", "–", "–"], color: "var(--good)",
+            message: `Done: one product per index, O(n) time and O(n) space for the index lists.`
+        });
+        return steps;
+    }
+
+    const STRATEGIES = {
+        bruteforce: {
+            build: buildBruteforceSteps,
+            labels: ["Substring", "Text"],
+            check: "split",
+            description: `Strategy shown (<code>solution/UniqueLetterStringBruteforce.kt</code>): build
+                <strong style="color: var(--p1)">every substring</strong> and count its characters with a map, the ones
+                occurring <strong style="color: var(--good)">once</strong> add 1. O(n³) time, O(n³) space.`
+        },
+        next: {
+            build: buildNextSteps,
+            labels: ["Start", "Character"],
+            check: "split",
+            description: `Strategy shown (<code>solution/UniqueLetterStringNextOccurrences.kt</code>): for every
+                <strong style="color: var(--p1)">start</strong> and character, the substrings ending from its
+                <strong style="color: var(--good)">next occurrence</strong> up to before the
+                <strong style="color: var(--bad)">one after</strong> contain it once. O(n · k) time, O(n) space.`
+        },
+        split: {
+            build: buildSplitSteps,
+            labels: ["Index i", "Character"],
+            check: "bruteforce",
+            description: `Strategy shown (<code>solution/UniqueLetterStringCharSplit.kt</code>): every occurrence is unique in
+                <strong style="color: var(--p1)">(i - prev)</strong> × <strong style="color: var(--p2)">(next - i)</strong>
+                substrings, between its neighbouring occurrences. O(n) time, O(n) space.`
+        }
+    };
+
+    function el(name, attrs = {}, text) {
+        const node = document.createElementNS(SVG_NS, name);
+        for (const [key, value] of Object.entries(attrs)) {
+            node.setAttribute(key, value);
+        }
+        if (text !== undefined) {
+            node.textContent = text;
+        }
+        return node;
+    }
+
+    function renderChart(step) {
+        const svg = document.getElementById("chart");
+        svg.replaceChildren();
+        svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+
+        const n = s.length;
+        // cells -1 and n are the sentinels, so there are n + 2 positions
+        const cw = Math.min(56, (W - 40) / (n + 2));
+        const left = (W - (n + 2) * cw) / 2 + cw;
+        const x = i => left + i * cw;
+        const cx = i => x(i) + cw / 2;
+
+        const styles = {
+            unique: { fill: "var(--good)", fillOpacity: 0.2, stroke: "var(--good)", width: 3 },
+            repeat: { fill: "var(--bad)", fillOpacity: 0.15, stroke: "var(--bad)", width: 2 },
+            current: { fill: "var(--p1)", fillOpacity: 0.18, stroke: "var(--p1)", width: 3 },
+            faded: { fill: "var(--panel)", fillOpacity: 1, stroke: "var(--border)", width: 2, opacity: 0.35 },
+            "": { fill: "var(--panel)", fillOpacity: 1, stroke: "var(--border)", width: 2 }
+        };
+
+        // sentinels
+        for (const [i, text] of [[-1, "-1"], [n, "n"]]) {
+            svg.append(el("rect", {
+                x: x(i) + 3, y: CELLS_Y, width: cw - 6, height: CELL_H, rx: 6, fill: "none", stroke: "var(--muted)",
+                "stroke-width": 1.5, "stroke-dasharray": "4 3", opacity: 0.6
+            }));
+            svg.append(el("text", { x: cx(i), y: CELLS_Y + CELL_H / 2 + 5, "text-anchor": "middle", "font-size": 12, fill: "var(--muted)" }, text));
+        }
+
+        [...s].forEach((char, i) => {
+            const style = styles[step.cells[i]];
+            const opacity = style.opacity || 1;
+            svg.append(el("rect", {
+                x: x(i) + 3, y: CELLS_Y, width: cw - 6, height: CELL_H, rx: 6, fill: style.fill, "fill-opacity": style.fillOpacity,
+                stroke: style.stroke, "stroke-width": style.width, opacity
+            }));
+            svg.append(el("text", {
+                x: cx(i), y: CELLS_Y + CELL_H / 2 + 7, "text-anchor": "middle", "font-family": "ui-monospace, monospace",
+                "font-size": Math.min(20, cw * 0.5), "font-weight": 600, fill: "var(--text)", opacity
+            }, char));
+            svg.append(el("text", { x: cx(i), y: CELLS_Y + CELL_H + 15, "text-anchor": "middle", "font-size": 11, fill: "var(--muted)" }, i));
+        });
+
+        // brackets over or under a range of cells, with their label
+        for (const { from, to, label, color, below } of step.spans) {
+            const y = below ? CELLS_Y + CELL_H + 66 : CELLS_Y - 10;
+            const tick = below ? -6 : 6;
+            svg.append(el("path", {
+                d: `M${x(from) + 4},${y + tick} L${x(from) + 4},${y} L${x(to) + cw - 4},${y} L${x(to) + cw - 4},${y + tick}`,
+                fill: "none", stroke: color, "stroke-width": 2.5
+            }));
+            svg.append(el("text", {
+                x: (x(from) + x(to) + cw) / 2, y: below ? y + 16 : y - 8, "text-anchor": "middle", "font-size": 12,
+                "font-weight": 600, fill: color
+            }, label));
+        }
+
+        // pointers, stacked when several point to the same index
+        const used = {};
+        for (const { index, label, color } of step.pointers) {
+            const row = used[index] = (used[index] || 0) + 1;
+            svg.append(el("text", {
+                x: cx(index), y: CELLS_Y + CELL_H + 18 + row * 15, "text-anchor": "middle", "font-size": 12, "font-weight": 700, fill: color
+            }, `▲ ${label}`));
+        }
+    }
+
+    function render() {
+        const step = steps[current];
+        const isDone = current === steps.length - 1;
+        const config = STRATEGIES[strategy];
+
+        renderChart(step);
+
+        config.labels.forEach((label, i) => {
+            document.getElementById(`label${i}`).textContent = label;
+        });
+        step.stats.forEach((value, i) => {
+            document.getElementById(`stat${i}`).textContent = value;
+        });
+        document.getElementById("counter").textContent = step.sum;
+
+        const message = document.getElementById("message");
+        message.textContent = step.message;
+        message.style.borderLeftColor = step.color || "";
+
+        // cross-check with the final sum of another strategy
+        let resultText = "";
+        if (isDone) {
+            const checkSteps = STRATEGIES[config.check].build(s);
+            const expected = checkSteps[checkSteps.length - 1].sum;
+            const checkName = document.querySelector(`[data-strategy="${config.check}"]`).textContent.toLowerCase();
+            resultText = `Result = ${step.sum} ${step.sum === expected ? "✓" : "✗"} (${checkName} cross-check: ${expected})`;
+        }
+        document.getElementById("result").textContent = resultText;
+
+        const list = document.getElementById("log");
+        list.replaceChildren(...step.log.map(entry => {
+            const item = document.createElement("li");
+            item.textContent = entry;
+            return item;
+        }));
+        document.getElementById("noLog").style.display = step.log.length ? "none" : "block";
+
+        document.getElementById("reset").disabled = current === 0;
+        document.getElementById("back").disabled = current === 0;
+        document.getElementById("next").disabled = isDone;
+    }
+
+    // rebuild the snapshots for the current input and strategy, start from the beginning
+    function rebuild() {
+        stop();
+        steps = STRATEGIES[strategy].build(s);
+        current = 0;
+        render();
+    }
+
+    function load(newS) {
+        s = newS;
+        document.getElementById("custom").value = s;
+        document.getElementById("error").textContent = "";
+        rebuild();
+    }
+
+    function selectStrategy(name) {
+        strategy = STRATEGIES[name] ? name : "split";
+        document.querySelectorAll("[data-strategy]").forEach(tab => {
+            tab.setAttribute("aria-selected", tab.dataset.strategy === strategy);
+        });
+        document.getElementById("strategy").innerHTML = STRATEGIES[strategy].description;
+        try {
+            history.replaceState(null, "", `#${strategy}`);
+        } catch (e) {
+            // some browsers block history changes for pages opened from disk, the tab still works
+        }
+    }
+
+    function go(index) {
+        current = Math.max(0, Math.min(steps.length - 1, index));
+        render();
+    }
+
+    function play() {
+        if (current === steps.length - 1) {
+            current = 0;
+        }
+        document.getElementById("play").textContent = "⏸ Pause";
+        timer = setInterval(() => {
+            if (current >= steps.length - 1) {
+                stop();
+                return;
+            }
+            go(current + 1);
+        }, 800);
+    }
+
+    function stop() {
+        clearInterval(timer);
+        timer = null;
+        document.getElementById("play").textContent = "▶ Play";
+    }
+
+    function parseCustom(text) {
+        const value = text.trim().toUpperCase();
+        if (!/^[A-Z]+$/.test(value)) {
+            throw new Error("Enter at least one English letter A–Z, no spaces.");
+        }
+        if (value.length > 12) {
+            throw new Error("Keep it to 12 letters or fewer, the bruteforce already has 78 substrings then.");
+        }
+        return value;
+    }
+
+    // a few letters with repeats, so some characters are unique and some aren't
+    function randomS() {
+        const length = 5 + Math.floor(Math.random() * 4);
+        return Array.from({ length }, () => "ABCD"[Math.floor(Math.random() * 4)]).join("");
+    }
+
+    document.querySelectorAll("[data-strategy]").forEach(tab => {
+        tab.addEventListener("click", () => {
+            selectStrategy(tab.dataset.strategy);
+            rebuild();
+        });
+    });
+
+    document.querySelectorAll("[data-example]").forEach(button => {
+        button.addEventListener("click", () => load(button.dataset.example));
+    });
+
+    document.getElementById("random").addEventListener("click", () => load(randomS()));
+
+    document.getElementById("load").addEventListener("click", () => {
+        try {
+            load(parseCustom(document.getElementById("custom").value));
+        } catch (e) {
+            document.getElementById("error").textContent = e.message;
+        }
+    });
+
+    document.getElementById("custom").addEventListener("keydown", e => {
+        if (e.key === "Enter") {
+            document.getElementById("load").click();
+        }
+    });
+
+    document.getElementById("reset").addEventListener("click", () => {
+        stop();
+        go(0);
+    });
+    document.getElementById("back").addEventListener("click", () => {
+        stop();
+        go(current - 1);
+    });
+    document.getElementById("next").addEventListener("click", () => {
+        stop();
+        go(current + 1);
+    });
+    document.getElementById("play").addEventListener("click", () => (timer ? stop() : play()));
+
+    document.addEventListener("keydown", e => {
+        if (e.target.tagName === "INPUT") {
+            return;
+        }
+        if (e.key === "ArrowRight") {
+            stop();
+            go(current + 1);
+        } else if (e.key === "ArrowLeft") {
+            stop();
+            go(current - 1);
+        } else if (e.key === " ") {
+            e.preventDefault();
+            timer ? stop() : play();
+        }
+    });
+
+    // the selected tab is kept in the URL hash, e.g. UniqueLetterString.html#bruteforce
+    selectStrategy(location.hash.slice(1));
+    load("LEETCODE");
+</script>
+</body>
+</html>
