@@ -1,0 +1,652 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sort Characters By Frequency</title>
+<link rel="icon" type="image/png" href="../../../../../../udemy.png">
+<link rel="stylesheet" href="../../visualizer.css">
+<style>
+    :root {
+        --p1: #3b6fd8;
+        --p2: #9333ea;
+        --counter: var(--p2);
+    }
+
+    @media (prefers-color-scheme: dark) {
+        :root {
+            --p1: #6d9bff;
+            --p2: #c084fc;
+        }
+    }
+</style>
+</head>
+<body>
+<main>
+    <h1>Sort the characters of a string by how often they occur</h1>
+    <div class="card">
+        <p>
+            Given a string <code>s</code>, sort it in decreasing order based on the frequency of the characters. The
+            frequency of a character is the number of times it appears in the string.
+        </p>
+        <p>
+            Return the sorted string. If there are multiple answers, return any of them.
+        </p>
+    </div>
+
+    <div class="tabs" role="tablist">
+        <button class="tab" role="tab" data-strategy="bruteforce">Bruteforce</button>
+        <button class="tab" role="tab" data-strategy="hashmap">HashMap</button>
+        <button class="tab" role="tab" data-strategy="bucket">Bucket</button>
+    </div>
+    <p class="subtitle" id="strategy"></p>
+
+    <div class="card">
+        <div class="row">
+            <button data-example="tree">Example 1</button>
+            <button data-example="cccaaa">Example 2</button>
+            <button data-example="Aabb">Example 3</button>
+            <button id="random">Random</button>
+            <input id="custom" placeholder="Custom s, e.g. Mississippi">
+            <button id="load">Load</button>
+        </div>
+        <div class="error" id="error"></div>
+    </div>
+
+    <div class="card">
+        <svg id="chart" viewBox="0 0 800 300" role="img" aria-label="String, character counts and the sorted result"></svg>
+        <div class="row controls">
+            <button id="reset" title="Reset">⏮ Reset</button>
+            <button id="back" title="Back (←)">◀ Back</button>
+            <button id="play" class="primary" title="Play / Pause (Space)">▶ Play</button>
+            <button id="next" title="Next (→)">Next ▶</button>
+        </div>
+        <p class="muted hint">
+            Keyboard: <kbd>←</kbd> <kbd>→</kbd> step, <kbd>Space</kbd> play / pause
+        </p>
+    </div>
+
+    <div class="card">
+        <div class="grid">
+            <div class="stat">
+                <div class="label">Phase</div>
+                <div class="value" id="stat0">–</div>
+            </div>
+            <div class="stat">
+                <div class="label">Character</div>
+                <div class="value" id="stat1">–</div>
+            </div>
+            <div class="stat">
+                <div class="label">Count</div>
+                <div class="value" id="stat2">–</div>
+            </div>
+            <div class="stat">
+                <div class="label">Result length</div>
+                <div class="value counter" id="counter">0</div>
+            </div>
+        </div>
+        <div class="message" id="message"></div>
+        <div class="result" id="result"></div>
+        <div style="margin-top: 12px">
+            <strong>Log</strong>
+            <ol id="log"></ol>
+            <div class="muted" id="noLog">Nothing done yet.</div>
+        </div>
+    </div>
+</main>
+
+<script>
+    const SVG_NS = "http://www.w3.org/2000/svg";
+    const W = 800;
+    const LEFT = 95;        // cells start here, row labels end left of it
+    const CELL_H = 40;
+    const ROW_GAP = 30;     // space between two rows, holds the "sub" text under a cell
+
+    let s = "";
+    let strategy = "bucket";
+    let steps = [];     // snapshot after each step, steps[0] = before the first character
+    let current = 0;
+    let timer = null;
+
+    // characters are compared by their code like Kotlin's Char: digits < uppercase < lowercase
+    const byCode = (a, b) => a.charCodeAt(0) - b.charCodeAt(0);
+
+    // Every builder records snapshots of the same shape, so one renderer draws all strategies:
+    //   sStates: per character of s "current" | "done" | "" (not read yet)
+    //   counts:  [{ char, count }] in the order the characters first appear, highlight: char of this step
+    //   rows:    [{ label, cells: [{ text, sub, state }] }] the strategy's own structure, state "active" | "done" | ""
+    //   result:  the string built so far, added: how many characters at its end were added in this step
+    function recorder(n) {
+        const steps = [];
+        const log = [];
+        const record = fields => {
+            steps.push({
+                log: [...log], sStates: Array(n).fill("done"), counts: [], highlight: null, rows: [],
+                result: "", added: 0, stats: ["–", "–", "–"], color: null,
+                ...fields
+            });
+        };
+        return { steps, log, record };
+    }
+
+    // counting phase, shared by all strategies: one step per character of s
+    function countSteps(s, record, log) {
+        const counts = new Map();
+        const table = () => [...counts].map(([char, count]) => ({ char, count }));
+        record({ sStates: Array(s.length).fill(""), stats: ["count", "–", "–"], message: `Count how often each of the ${s.length} characters occurs.` });
+
+        [...s].forEach((char, i) => {
+            counts.set(char, (counts.get(char) || 0) + 1);
+            const count = counts.get(char);
+            record({
+                sStates: [...s].map((_, j) => j < i ? "done" : j === i ? "current" : ""), counts: table(), highlight: char,
+                stats: ["count", `'${char}'`, count], color: "var(--p1)",
+                message: count === 1 ? `'${char}' shows up for the first time → count['${char}'] = 1.` : `'${char}' again → count['${char}'] = ${count}.`
+            });
+        });
+
+        log.push(`Counted ${s.length} characters, ${counts.size} distinct`);
+        return { counts, table: table() };
+    }
+
+    // building phase, shared by all strategies: append one block of equal characters per step
+    function buildSteps(blocks, record, log, base, rowsFor) {
+        let result = "";
+        blocks.forEach(({ char, count }, b) => {
+            result += char.repeat(count);
+            log.push(`Append '${char}' × ${count} → "${result}"`);
+            record({
+                ...base, rows: rowsFor(b), result, added: count, highlight: char,
+                stats: ["build", `'${char}'`, count], color: "var(--cursor)",
+                message: `Append '${char}' ${count} time${count === 1 ? "" : "s"} → "${result}".`
+            });
+        });
+        return result;
+    }
+
+    // Sort the characters, cut them into runs and sort the runs by length, mirrors solution/FrequencySortBruteforce.kt.
+    // There is no count table here (counts: null), the length of a run is the count.
+    function buildBruteforceSteps(s) {
+        const { steps, log, record } = recorder(s.length);
+        const chars = [...s].sort(byCode);
+        const base = { counts: null };
+
+        record({
+            ...base, stats: ["sort", "–", "–"],
+            message: "Sort the characters of s first, then equal characters stand next to each other."
+        });
+
+        // runs in the order they are cut from the sorted characters
+        const runs = [];
+        chars.forEach((char, i) => {
+            if (i === 0 || chars[i - 1] !== char) {
+                runs.push({ char, count: 0, start: i });
+            }
+            runs[runs.length - 1].count++;
+        });
+
+        // sorted row: cells of the current run "active", of the runs cut before "done"
+        const sortedRow = (cut, active) => ({
+            label: "sorted",
+            cells: chars.map((char, i) => {
+                const r = runs.findIndex(run => i >= run.start && i < run.start + run.count);
+                return { text: char, sub: "", state: r === active ? "active" : r < cut ? "done" : "" };
+            })
+        });
+        const runsRow = (list, active, label) => ({
+            label,
+            cells: list.map(({ char, count }, r) => ({ text: char, sub: `×${count}`, state: r === active ? "active" : r < active ? "done" : "" }))
+        });
+
+        log.push(`Sorted the characters → "${chars.join("")}"`);
+        record({
+            ...base, rows: [sortedRow(0, -1), runsRow([], -1, "runs")], stats: ["sort", "–", "–"], color: "var(--p2)",
+            message: `Sorted all ${s.length} characters → "${chars.join("")}". O(n log n).`
+        });
+
+        runs.forEach((run, r) => {
+            const text = run.char.repeat(run.count);
+            log.push(`Run "${text}"`);
+            record({
+                ...base, rows: [sortedRow(r, r), runsRow(runs.slice(0, r + 1), r, "runs")], highlight: run.char,
+                stats: ["cut runs", `'${run.char}'`, run.count], color: "var(--p1)",
+                message: (r + 1 < runs.length
+                    ? `chars[${run.start + run.count}] = '${chars[run.start + run.count]}' differs from '${run.char}' → `
+                    : "End of the characters → ") + `the run "${text}" is done, its length ${run.count} is the count of '${run.char}'.`
+            });
+        });
+
+        // Array.sort is stable like Kotlin's sortedByDescending, so runs of equal length keep their order
+        const byLength = [...runs].sort((a, b) => b.count - a.count);
+        const rowsFor = active => [sortedRow(runs.length, -1), runsRow(byLength, active, "by length")];
+
+        log.push(`Sorted ${runs.length} runs by length`);
+        record({
+            ...base, rows: rowsFor(-1), stats: ["sort runs", "–", "–"], color: "var(--p2)",
+            message: `Sort the ${runs.length} runs by length, longest first.`
+        });
+
+        const result = buildSteps(byLength, record, log, base, rowsFor);
+        record({
+            ...base, rows: rowsFor(byLength.length), result, stats: ["done", "–", "–"], color: "var(--good)",
+            message: `Done: sorting all n characters costs O(n log n), sorting the k runs only O(k log k).`
+        });
+        return steps;
+    }
+
+    // Sort only the k distinct characters, mirrors solution/FrequencySortHashMap.kt.
+    function buildHashMapSteps(s) {
+        const { steps, log, record } = recorder(s.length);
+        const { table } = countSteps(s, record, log);
+        // Array.sort is stable like Kotlin's sortedByDescending, so ties keep the order they were counted in
+        const entries = [...table].sort((a, b) => b.count - a.count);
+        const base = { counts: table };
+        const rowsFor = active => [{
+            label: "entries",
+            cells: entries.map(({ char, count }, b) => ({ text: char, sub: `×${count}`, state: b === active ? "active" : b < active ? "done" : "" }))
+        }];
+
+        log.push(`Sorted ${entries.length} entries by count`);
+        record({
+            ...base, rows: rowsFor(-1), stats: ["sort", "–", "–"], color: "var(--p2)",
+            message: `Sort only the ${entries.length} map entries by count, not all ${s.length} characters. O(k log k).`
+        });
+
+        buildSteps(entries, record, log, base, rowsFor);
+        record({
+            ...base, rows: rowsFor(entries.length), result: entries.map(e => e.char.repeat(e.count)).join(""),
+            stats: ["done", "–", "–"], color: "var(--good)",
+            message: `Done: O(n) to count and build plus O(k log k) to sort the ${entries.length} entries.`
+        });
+        return steps;
+    }
+
+    // Bucket per count, mirrors solution/FrequencySortBucket.kt.
+    function buildBucketSteps(s) {
+        const { steps, log, record } = recorder(s.length);
+        const { table } = countSteps(s, record, log);
+        const n = s.length;
+        const buckets = Array.from({ length: n + 1 }, () => []);
+        const base = { counts: table };
+
+        // buckets from the highest count down, empty buckets are only drawn when there are few of them
+        const maxCount = Math.max(...table.map(e => e.count));
+        const shown = [];
+        for (let count = maxCount; count >= 1; count--) {
+            if (maxCount <= 8 || buckets[count].length || table.some(e => e.count === count)) {
+                shown.push(count);
+            }
+        }
+        const rowsFor = (filled, activeChar, doneChars) => shown.map(count => ({
+            label: `bucket ${count}`,
+            cells: buckets[count].filter(char => filled.has(char)).map(char => ({
+                text: char, sub: "", state: char === activeChar ? "active" : doneChars.has(char) ? "done" : ""
+            }))
+        }));
+
+        // fill: like the Kotlin code, walk the character codes in ascending order
+        const filled = new Set();
+        const sortedChars = [...table].sort((a, b) => byCode(a.char, b.char));
+        for (const { char, count } of sortedChars) {
+            buckets[count].push(char);
+        }
+        for (const { char, count } of sortedChars) {
+            filled.add(char);
+            log.push(`'${char}' → bucket ${count}`);
+            record({
+                ...base, rows: rowsFor(filled, char, new Set()), highlight: char, stats: ["fill", `'${char}'`, count], color: "var(--p2)",
+                message: `count['${char}'] = ${count} → put '${char}' into bucket ${count}.`
+            });
+        }
+
+        // build: walk the buckets from n down to 1
+        const blocks = [];
+        for (let count = n; count >= 1; count--) {
+            for (const char of buckets[count]) {
+                blocks.push({ char, count });
+            }
+        }
+        const done = new Set();
+        let result = "";
+        blocks.forEach(({ char, count }, b) => {
+            const skipped = b === 0 ? n - count : blocks[b - 1].count - count - 1;
+            done.add(char);
+            result += char.repeat(count);
+            log.push(`Append '${char}' × ${count} → "${result}"`);
+            record({
+                ...base, rows: rowsFor(filled, char, done), result, added: count, highlight: char,
+                stats: ["build", `'${char}'`, count], color: "var(--cursor)",
+                message: (skipped > 0 ? `Skip ${skipped} empty bucket${skipped === 1 ? "" : "s"}. ` : "") +
+                    `Bucket ${count}: append '${char}' ${count} time${count === 1 ? "" : "s"} → "${result}".`
+            });
+        });
+
+        record({
+            ...base, rows: rowsFor(filled, null, done), result, stats: ["done", "–", "–"], color: "var(--good)",
+            message: `Done: counting, filling and walking the n + 1 buckets are all O(n), no sorting needed.`
+        });
+        return steps;
+    }
+
+    // same characters as s, equal characters together and counts never increasing, see FrequencySortRunner.kt
+    function isValid(s, result) {
+        if ([...result].sort().join("") !== [...s].sort().join("")) {
+            return false;
+        }
+        const blocks = [];
+        for (const char of result) {
+            if (blocks.length && blocks[blocks.length - 1].char === char) {
+                blocks[blocks.length - 1].count++;
+            } else {
+                blocks.push({ char, count: 1 });
+            }
+        }
+        return new Set(blocks.map(b => b.char)).size === blocks.length &&
+            blocks.every((b, i) => i === 0 || blocks[i - 1].count >= b.count);
+    }
+
+    const STRATEGIES = {
+        bruteforce: {
+            build: buildBruteforceSteps,
+            check: "hashmap",
+            description: `Strategy shown (<code>solution/FrequencySortBruteforce.kt</code>):
+                <strong style="color: var(--p2)">sort all n characters</strong>, cut them into
+                <strong style="color: var(--p1)">runs</strong> of equal characters and sort the runs by length, longest
+                first. No counting needed. O(n log n) time, O(n) space.`
+        },
+        hashmap: {
+            build: buildHashMapSteps,
+            check: "bucket",
+            description: `Strategy shown (<code>solution/FrequencySortHashMap.kt</code>): count in a hash map,
+                <strong style="color: var(--p2)">sort only the k entries</strong> by count and append each character
+                count times. O(n + k log k) time, O(n) space.`
+        },
+        bucket: {
+            build: buildBucketSteps,
+            check: "hashmap",
+            description: `Strategy shown (<code>solution/FrequencySortBucket.kt</code>): count, put every character into
+                <strong style="color: var(--p2)">bucket[count]</strong> and walk the buckets from n down to 1. O(n) time,
+                O(n) space.`
+        }
+    };
+
+    function el(name, attrs = {}, text) {
+        const node = document.createElementNS(SVG_NS, name);
+        for (const [key, value] of Object.entries(attrs)) {
+            node.setAttribute(key, value);
+        }
+        if (text !== undefined) {
+            node.textContent = text;
+        }
+        return node;
+    }
+
+    const cellWidth = () => Math.min(44, (W - LEFT - 15) / Math.max(1, s.length));
+
+    // y of every part, the chart keeps the height of the last step so it doesn't jump while stepping
+    function layout(rowCount, withCounts) {
+        const sY = 20;
+        const countsY = sY + CELL_H + ROW_GAP;
+        const rowsY = withCounts ? countsY + CELL_H + ROW_GAP : countsY;
+        const resultY = rowsY + rowCount * (CELL_H + ROW_GAP);
+        return { sY, countsY, rowsY, resultY, height: resultY + CELL_H + 15 };
+    }
+
+    function cell(svg, x, y, w, text, sub, state) {
+        const styles = {
+            current: { fill: "var(--p1)", fillOpacity: 0.18, stroke: "var(--p1)", width: 3 },
+            active: { fill: "var(--cursor)", fillOpacity: 0.25, stroke: "var(--cursor)", width: 3 },
+            done: { fill: "var(--muted)", fillOpacity: 0.12, stroke: "var(--border)", width: 2 },
+            faded: { fill: "var(--panel)", fillOpacity: 1, stroke: "var(--border)", width: 2, opacity: 0.35 }
+        };
+        const style = styles[state] || { fill: "var(--panel)", fillOpacity: 1, stroke: "var(--border)", width: 2 };
+        const opacity = style.opacity || 1;
+        svg.append(el("rect", {
+            x: x + 2, y, width: w - 4, height: CELL_H, rx: 6, fill: style.fill, "fill-opacity": style.fillOpacity,
+            stroke: style.stroke, "stroke-width": style.width, opacity
+        }));
+        svg.append(el("text", {
+            x: x + w / 2, y: y + CELL_H / 2 + 6, "text-anchor": "middle", "font-family": "ui-monospace, monospace",
+            "font-size": Math.min(18, w * 0.5), "font-weight": 600, fill: "var(--text)", opacity
+        }, text));
+        if (sub) {
+            svg.append(el("text", {
+                x: x + w / 2, y: y + CELL_H + 15, "text-anchor": "middle", "font-size": Math.min(12, w * 0.32), fill: "var(--muted)", opacity
+            }, sub));
+        }
+    }
+
+    function renderChart(step) {
+        const svg = document.getElementById("chart");
+        svg.replaceChildren();
+        const last = steps[steps.length - 1];
+        const { sY, countsY, rowsY, resultY, height } = layout(last.rows.length, last.counts !== null);
+        svg.setAttribute("viewBox", `0 0 ${W} ${height}`);
+
+        const cw = cellWidth();
+        const x = i => LEFT + i * cw;
+        const label = (y, text) => svg.append(el("text", {
+            x: LEFT - 10, y: y + CELL_H / 2 + 4, "text-anchor": "end", "font-size": 12, fill: "var(--muted)"
+        }, text));
+
+        // s with the counting cursor, the characters not read yet faded
+        label(sY, "s");
+        [...s].forEach((char, i) => {
+            const state = step.sStates[i];
+            cell(svg, x(i), sY, cw, char, "", state === "current" ? "current" : state === "" ? "faded" : "");
+        });
+
+        // count table: one cell per distinct character, its count below (the bruteforce has none)
+        if (step.counts !== null) {
+            label(countsY, "counts");
+            if (!step.counts.length) {
+                svg.append(el("text", { x: LEFT + 4, y: countsY + CELL_H / 2 + 4, "font-size": 13, fill: "var(--muted)" }, "empty"));
+            }
+            step.counts.forEach(({ char, count }, i) => {
+                const isCurrent = char === step.highlight;
+                cell(svg, x(i), countsY, cw, char, String(count), isCurrent ? (step.stats[0] === "count" ? "current" : "active") : "");
+            });
+        }
+
+        // the strategy's own rows: sorted characters, sorted entries or the buckets
+        step.rows.forEach((row, r) => {
+            const y = rowsY + r * (CELL_H + ROW_GAP);
+            label(y, row.label);
+            if (!row.cells.length) {
+                svg.append(el("text", { x: LEFT + 4, y: y + CELL_H / 2 + 4, "font-size": 13, fill: "var(--muted)" }, "empty"));
+            }
+            row.cells.forEach((c, i) => cell(svg, x(i), y, cw, c.text, c.sub, c.state));
+        });
+
+        // result so far, the block added in this step highlighted, the remaining positions dashed
+        label(resultY, "result");
+        for (let i = 0; i < s.length; i++) {
+            if (i < step.result.length) {
+                cell(svg, x(i), resultY, cw, step.result[i], "", i >= step.result.length - step.added ? "active" : "");
+            } else {
+                svg.append(el("rect", {
+                    x: x(i) + 2, y: resultY, width: cw - 4, height: CELL_H, rx: 6, fill: "none",
+                    stroke: "var(--border)", "stroke-width": 1.5, "stroke-dasharray": "4 3"
+                }));
+            }
+        }
+    }
+
+    function render() {
+        const step = steps[current];
+        const isDone = current === steps.length - 1;
+        const config = STRATEGIES[strategy];
+
+        renderChart(step);
+
+        step.stats.forEach((value, i) => {
+            document.getElementById(`stat${i}`).textContent = value;
+        });
+        document.getElementById("counter").textContent = step.result.length;
+
+        const message = document.getElementById("message");
+        message.textContent = step.message;
+        message.style.borderLeftColor = step.color || "";
+
+        // the answer isn't unique, so check the rules and show what another strategy returns
+        let resultText = "";
+        if (isDone) {
+            const checkSteps = STRATEGIES[config.check].build(s);
+            const other = checkSteps[checkSteps.length - 1].result;
+            const checkName = document.querySelector(`[data-strategy="${config.check}"]`).textContent;
+            resultText = `Result = "${step.result}" ${isValid(s, step.result) ? "✓ valid" : "✗ invalid"} ` +
+                `(${checkName} cross-check: "${other}" ${isValid(s, other) ? "✓" : "✗"}${other === step.result ? ", same" : ", ties in another order"})`;
+        }
+        document.getElementById("result").textContent = resultText;
+
+        const list = document.getElementById("log");
+        list.replaceChildren(...step.log.map(entry => {
+            const item = document.createElement("li");
+            item.textContent = entry;
+            return item;
+        }));
+        document.getElementById("noLog").style.display = step.log.length ? "none" : "block";
+
+        document.getElementById("reset").disabled = current === 0;
+        document.getElementById("back").disabled = current === 0;
+        document.getElementById("next").disabled = isDone;
+    }
+
+    // rebuild the snapshots for the current input and strategy, start from the beginning
+    function rebuild() {
+        stop();
+        steps = STRATEGIES[strategy].build(s);
+        current = 0;
+        render();
+    }
+
+    function load(newS) {
+        s = newS;
+        document.getElementById("custom").value = s;
+        document.getElementById("error").textContent = "";
+        rebuild();
+    }
+
+    function selectStrategy(name) {
+        strategy = STRATEGIES[name] ? name : "bucket";
+        document.querySelectorAll("[data-strategy]").forEach(tab => {
+            tab.setAttribute("aria-selected", tab.dataset.strategy === strategy);
+        });
+        document.getElementById("strategy").innerHTML = STRATEGIES[strategy].description;
+        try {
+            history.replaceState(null, "", `#${strategy}`);
+        } catch (e) {
+            // some browsers block history changes for pages opened from disk, the tab still works
+        }
+    }
+
+    function go(index) {
+        current = Math.max(0, Math.min(steps.length - 1, index));
+        render();
+    }
+
+    function play() {
+        if (current === steps.length - 1) {
+            current = 0;
+        }
+        document.getElementById("play").textContent = "⏸ Pause";
+        timer = setInterval(() => {
+            if (current >= steps.length - 1) {
+                stop();
+                return;
+            }
+            go(current + 1);
+        }, 800);
+    }
+
+    function stop() {
+        clearInterval(timer);
+        timer = null;
+        document.getElementById("play").textContent = "▶ Play";
+    }
+
+    function parseCustom(text) {
+        const value = text.trim();
+        if (value === "") {
+            throw new Error("Enter at least one character.");
+        }
+        if (!/^[A-Za-z0-9]+$/.test(value)) {
+            throw new Error("Only English letters and digits are allowed, no spaces.");
+        }
+        if (value.length > 30) {
+            throw new Error("Keep it to 30 characters or fewer so the chart stays readable.");
+        }
+        return value;
+    }
+
+    // a few characters with repeats, so there are different counts and some ties
+    function randomS() {
+        const pool = "abcdeABC123";
+        const chars = [...pool].sort(() => Math.random() - 0.5).slice(0, 3 + Math.floor(Math.random() * 3));
+        const all = chars.flatMap(char => Array(1 + Math.floor(Math.random() * 4)).fill(char));
+        return all.sort(() => Math.random() - 0.5).join("");
+    }
+
+    document.querySelectorAll("[data-strategy]").forEach(tab => {
+        tab.addEventListener("click", () => {
+            selectStrategy(tab.dataset.strategy);
+            rebuild();
+        });
+    });
+
+    document.querySelectorAll("[data-example]").forEach(button => {
+        button.addEventListener("click", () => load(button.dataset.example));
+    });
+
+    document.getElementById("random").addEventListener("click", () => load(randomS()));
+
+    document.getElementById("load").addEventListener("click", () => {
+        try {
+            load(parseCustom(document.getElementById("custom").value));
+        } catch (e) {
+            document.getElementById("error").textContent = e.message;
+        }
+    });
+
+    document.getElementById("custom").addEventListener("keydown", e => {
+        if (e.key === "Enter") {
+            document.getElementById("load").click();
+        }
+    });
+
+    document.getElementById("reset").addEventListener("click", () => {
+        stop();
+        go(0);
+    });
+    document.getElementById("back").addEventListener("click", () => {
+        stop();
+        go(current - 1);
+    });
+    document.getElementById("next").addEventListener("click", () => {
+        stop();
+        go(current + 1);
+    });
+    document.getElementById("play").addEventListener("click", () => (timer ? stop() : play()));
+
+    document.addEventListener("keydown", e => {
+        if (e.target.tagName === "INPUT") {
+            return;
+        }
+        if (e.key === "ArrowRight") {
+            stop();
+            go(current + 1);
+        } else if (e.key === "ArrowLeft") {
+            stop();
+            go(current - 1);
+        } else if (e.key === " ") {
+            e.preventDefault();
+            timer ? stop() : play();
+        }
+    });
+
+    // the selected tab is kept in the URL hash, e.g. FrequencySort.html#bruteforce
+    selectStrategy(location.hash.slice(1));
+    load("tree");
+</script>
+</body>
+</html>

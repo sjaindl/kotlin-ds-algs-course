@@ -11,7 +11,7 @@ If no group matches, the string starts a new group.
 
 n: number of strings, k: length of the longest string
 T: O(n² · k) - every string is compared with up to n group heads in O(k)
-S: O(n · k) - the groups
+S: O(1) - the groups
 
 groups = []
 for each str in strs:
