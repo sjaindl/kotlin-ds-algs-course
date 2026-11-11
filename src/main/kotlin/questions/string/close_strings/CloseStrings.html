@@ -1,0 +1,682 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Close Strings</title>
+<link rel="icon" type="image/png" href="../../../../../../udemy.png">
+<link rel="stylesheet" href="../../visualizer.css">
+<style>
+    :root {
+        --p1: #3b6fd8;
+        --p2: #9333ea;
+    }
+
+    @media (prefers-color-scheme: dark) {
+        :root {
+            --p1: #6d9bff;
+            --p2: #c084fc;
+        }
+    }
+
+    .stat .value.counter.true {
+        color: var(--good);
+    }
+
+    .stat .value.counter.false {
+        color: var(--bad);
+    }
+</style>
+</head>
+<body>
+<main>
+    <h1>Determine if two strings are close</h1>
+    <div class="card">
+        <p>Two strings are considered close if you can attain one from the other using the following operations:</p>
+        <ul>
+            <li>Operation 1: Swap any two existing characters.<br>For example, <code>abcde -> aecdb</code></li>
+            <li>
+                Operation 2: Transform every occurrence of one existing character into another existing character, and
+                do the same with the other character.<br>For example, <code>aacabb -> bbcbaa</code> (all <code>a</code>'s
+                turn into <code>b</code>'s, and all <code>b</code>'s turn into <code>a</code>'s)
+            </li>
+        </ul>
+        <p>You can use the operations on either string as many times as necessary.</p>
+        <p>
+            Given two strings, <code>word1</code> and <code>word2</code>, return <code>true</code> if <code>word1</code>
+            and <code>word2</code> are close, and <code>false</code> otherwise.
+        </p>
+    </div>
+
+    <div class="tabs" role="tablist">
+        <button class="tab" role="tab" data-strategy="hashmap">HashMap</button>
+        <button class="tab" role="tab" data-strategy="array">Frequency array</button>
+        <button class="tab" role="tab" data-strategy="bitmask">Bit mask</button>
+    </div>
+    <p class="subtitle" id="strategy"></p>
+
+    <div class="card">
+        <div class="row">
+            <button data-example="abc,bca">Example 1</button>
+            <button data-example="a,aa">Example 2</button>
+            <button data-example="cabbba,abbccc">Example 3</button>
+            <button id="random">Random</button>
+        </div>
+        <div class="row" style="margin-top: 8px">
+            <input id="custom1" placeholder="word1, e.g. uau">
+            <input id="custom2" placeholder="word2, e.g. ssx">
+            <button id="load">Load</button>
+        </div>
+        <div class="error" id="error"></div>
+    </div>
+
+    <div class="card">
+        <svg id="chart" viewBox="0 0 800 300" role="img" aria-label="Both words, their letter counts and the comparison"></svg>
+        <div class="row controls">
+            <button id="reset" title="Reset">⏮ Reset</button>
+            <button id="back" title="Back (←)">◀ Back</button>
+            <button id="play" class="primary" title="Play / Pause (Space)">▶ Play</button>
+            <button id="next" title="Next (→)">Next ▶</button>
+        </div>
+        <p class="muted hint">
+            Keyboard: <kbd>←</kbd> <kbd>→</kbd> step, <kbd>Space</kbd> play / pause
+        </p>
+    </div>
+
+    <div class="card">
+        <div class="grid">
+            <div class="stat">
+                <div class="label">Phase</div>
+                <div class="value" id="stat0">–</div>
+            </div>
+            <div class="stat">
+                <div class="label">Letter</div>
+                <div class="value" id="stat1">–</div>
+            </div>
+            <div class="stat">
+                <div class="label">Compared</div>
+                <div class="value" id="stat2">–</div>
+            </div>
+            <div class="stat">
+                <div class="label">Close?</div>
+                <div class="value counter" id="counter">–</div>
+            </div>
+        </div>
+        <div class="message" id="message"></div>
+        <div class="result" id="result"></div>
+        <div style="margin-top: 12px">
+            <strong>Log</strong>
+            <ol id="log"></ol>
+            <div class="muted" id="noLog">Nothing done yet.</div>
+        </div>
+    </div>
+</main>
+
+<script>
+    const SVG_NS = "http://www.w3.org/2000/svg";
+    const W = 800;
+    const LEFT = 95;        // cells start here, row labels end left of it
+    const CELL_H = 34;
+    const LETTERS = "abcdefghijklmnopqrstuvwxyz";
+
+    let word1 = "";
+    let word2 = "";
+    let strategy = "bitmask";
+    let steps = [];     // snapshot after each step, steps[0] = before the first check
+    let current = 0;
+    let timer = null;
+
+    // Every builder records snapshots of the same shape, so one renderer draws all strategies.
+    // A snapshot has a list of row groups, every group is drawn with one cell width so its rows line up:
+    //   groups: [{ rows: [{ label, cells: [{ text, sub, state }] }] }]
+    //   state:  "current" | "active" | "ok" | "bad" | "done" | "faded" | ""
+    //   result: null while unknown, then true / false
+    function recorder() {
+        const steps = [];
+        const log = [];
+        const record = fields => {
+            steps.push({ log: [...log], groups: [], result: null, stats: ["–", "–", "–"], color: null, ...fields });
+        };
+        return { steps, log, record };
+    }
+
+    const wordRow = (label, word, cursor, read) => ({
+        label,
+        cells: [...word].map((char, i) => ({ text: char, state: i === cursor ? "current" : i < read ? "done" : "faded" }))
+    });
+
+    // count both words character by character, onCount(wordIndex, char) updates the strategy's own tables
+    function countSteps(record, log, tablesGroup, onCount, label) {
+        const words = [word1, word2];
+        words.forEach((word, w) => {
+            [...word].forEach((char, i) => {
+                const count = onCount(w, char);
+                const read = w === 0 ? [i, 0] : [word1.length, i];
+                const cursor = w === 0 ? [i, -1] : [-1, i];
+                record({
+                    groups: [
+                        { rows: [wordRow("word1", word1, cursor[0], read[0]), wordRow("word2", word2, cursor[1], read[1])] },
+                        ...tablesGroup(char, w)
+                    ],
+                    stats: ["count", `'${char}'`, "–"], color: "var(--p1)",
+                    message: `word${w + 1}[${i}] = '${char}' → ${label(char, count)}.`
+                });
+            });
+            log.push(`Counted word${w + 1}`);
+        });
+    }
+
+    const wordsGroup = () => ({ rows: [wordRow("word1", word1, -1, word1.length), wordRow("word2", word2, -1, word2.length)] });
+
+    // first check of every strategy: different lengths can never be close
+    function lengthStep(record, log) {
+        const same = word1.length === word2.length;
+        log.push(`Lengths ${word1.length} and ${word2.length}${same ? "" : " differ → false"}`);
+        record({
+            groups: [{ rows: [wordRow("word1", word1, -1, 0), wordRow("word2", word2, -1, 0)] }],
+            result: same ? null : false, stats: ["length", "–", `${word1.length} vs ${word2.length}`],
+            color: same ? "var(--good)" : "var(--bad)",
+            message: same
+                ? `Both words have length ${word1.length}. The operations never change the length, so continue.`
+                : `Lengths ${word1.length} and ${word2.length} differ, and no operation changes the length → not close.`
+        });
+        return same;
+    }
+
+    // compare the sorted counts index by index like == on two lists, stop at the first difference
+    function compareSortedSteps(record, log, fixedGroups, sorted1, sorted2, skipZeros) {
+        const states = sorted1.map(() => "");
+        const rowsFor = () => ({
+            rows: [
+                { label: "sorted 1", cells: sorted1.map((count, i) => ({ text: count, state: states[i] || (count === 0 ? "faded" : "") })) },
+                { label: "sorted 2", cells: sorted2.map((count, i) => ({ text: count, state: states[i] || (count === 0 ? "faded" : "") })) }
+            ]
+        });
+
+        log.push(`Sorted counts [${sorted1.join(", ")}] and [${sorted2.join(", ")}]`);
+        record({
+            groups: [...fixedGroups(), rowsFor()], stats: ["sort", "–", "–"], color: "var(--p2)",
+            message: "The letters match. Operation 2 can swap the counts of two letters, so only the counts in sorted order have to match."
+        });
+
+        // the frequency array and bit mask strategies sort all 26 counts: the zeros at the front are equal anyway
+        let start = 0;
+        if (skipZeros) {
+            while (start < sorted1.length && sorted1[start] === 0 && sorted2[start] === 0) {
+                states[start++] = "ok";
+            }
+            if (start > 0) {
+                record({
+                    groups: [...fixedGroups(), rowsFor()], stats: ["compare", "–", `0 × ${start}`], color: "var(--good)",
+                    message: `The first ${start} sorted counts are 0 in both: the letters both words don't use.`
+                });
+            }
+        }
+
+        for (let i = start; i < sorted1.length; i++) {
+            const same = sorted1[i] === sorted2[i];
+            states[i] = same ? "ok" : "bad";
+            const done = !same || i === sorted1.length - 1;
+            if (done) {
+                log.push(same ? "Sorted counts equal → true" : `Sorted counts differ at index ${i} → false`);
+            }
+            record({
+                groups: [...fixedGroups(), rowsFor()], result: done ? same : null,
+                stats: ["compare", "–", `${sorted1[i]} vs ${sorted2[i]}`], color: same ? (done ? "var(--good)" : "var(--p2)") : "var(--bad)",
+                message: same
+                    ? `Index ${i}: ${sorted1[i]} = ${sorted2[i]}.` + (done ? " All sorted counts are equal → the words are close." : "")
+                    : `Index ${i}: ${sorted1[i]} ≠ ${sorted2[i]}. No swap of counts turns one word's counts into the other's → not close.`
+            });
+            if (!same) {
+                return;
+            }
+        }
+    }
+
+    // Count in two hash maps, compare the key sets and the sorted values, mirrors solution/CloseStringsHashMap.kt.
+    function buildHashMapSteps() {
+        const { steps, log, record } = recorder();
+        record({ groups: [wordsGroup()], stats: ["–", "–", "–"], message: "First check the lengths, then count both words in a hash map." });
+        if (!lengthStep(record, log)) {
+            return steps;
+        }
+
+        const maps = [new Map(), new Map()];
+        const mapRow = (w, highlight, states = {}) => ({
+            label: `counts${w + 1}`,
+            cells: [...maps[w]].map(([char, count]) => ({
+                text: count, sub: char, state: states[char] || (char === highlight ? "current" : "")
+            }))
+        });
+        const tables = (highlight, w, states = [{}, {}]) => [{
+            rows: [mapRow(0, w === 0 ? highlight : null, states[0]), mapRow(1, w === 1 ? highlight : null, states[1])]
+        }];
+
+        countSteps(record, log, tables, (w, char) => {
+            maps[w].set(char, (maps[w].get(char) || 0) + 1);
+            return maps[w].get(char);
+        }, (char, count) => `${char}: ${count}`);
+
+        // key sets: sizes first, then every key of map2 must be in map1
+        const [size1, size2] = [maps[0].size, maps[1].size];
+        if (size1 !== size2) {
+            log.push(`Key sets have sizes ${size1} and ${size2} → false`);
+            record({
+                groups: [wordsGroup(), ...tables(null, -1)], result: false, stats: ["keys", "–", `${size1} vs ${size2} keys`],
+                color: "var(--bad)",
+                message: `word1 uses ${size1} different letters, word2 ${size2}. Operation 2 can't add or remove a letter → not close.`
+            });
+            return steps;
+        }
+
+        const states = [{}, {}];
+        for (const char of maps[1].keys()) {
+            const found = maps[0].has(char);
+            states[1][char] = found ? "ok" : "bad";
+            if (found) {
+                states[0][char] = "ok";
+            }
+            record({
+                groups: [wordsGroup(), ...tables(null, -1, states)], result: found ? null : false,
+                stats: ["keys", `'${char}'`, found ? "in both" : "only in word2"], color: found ? "var(--good)" : "var(--bad)",
+                message: found
+                    ? `'${char}' is a key of both maps.`
+                    : `'${char}' occurs in word2 but not in word1. Operation 2 only exchanges existing letters → not close.`
+            });
+            if (!found) {
+                log.push(`'${char}' missing in word1 → false`);
+                return steps;
+            }
+        }
+        log.push(`Same ${size1} keys`);
+
+        const sorted = maps.map(map => [...map.values()].sort((a, b) => a - b));
+        compareSortedSteps(record, log, () => [wordsGroup(), ...tables(null, -1, states)], sorted[0], sorted[1], false);
+        return steps;
+    }
+
+    // rows of all 26 counts, letters not used faded
+    function arrayRows(counts, highlight, states = [[], []]) {
+        return counts.map((row, w) => ({
+            label: `counts${w + 1}`,
+            cells: row.map((count, i) => ({
+                text: count, sub: LETTERS[i],
+                state: states[w][i] || (highlight && highlight.w === w && highlight.i === i ? "current" : count === 0 ? "faded" : "")
+            }))
+        }));
+    }
+
+    // Count in two IntArray(26), compare used letters and the sorted arrays, mirrors solution/CloseStringsFrequencyArray.kt.
+    function buildArraySteps() {
+        const { steps, log, record } = recorder();
+        record({ groups: [wordsGroup()], message: "First check the lengths, then count both words in an array of 26 counts, index char - 'a'." });
+        if (!lengthStep(record, log)) {
+            return steps;
+        }
+
+        const counts = [Array(26).fill(0), Array(26).fill(0)];
+        const tables = (char, w) => [{ rows: arrayRows(counts, { w, i: char.charCodeAt(0) - 97 }) }];
+        countSteps(record, log, tables, (w, char) => ++counts[w][char.charCodeAt(0) - 97], (char, count) => `counts[${char.charCodeAt(0) - 97}] = ${count}`);
+
+        // used letters: a count is 0 in both words or in neither, only the letters used by a word get a step
+        const states = [[], []];
+        for (let i = 0; i < 26; i++) {
+            const used = [counts[0][i] > 0, counts[1][i] > 0];
+            if (!used[0] && !used[1]) {
+                continue;
+            }
+            const same = used[0] === used[1];
+            states[0][i] = states[1][i] = same ? "ok" : "bad";
+            record({
+                groups: [wordsGroup(), { rows: arrayRows(counts, null, states) }], result: same ? null : false,
+                stats: ["letters", `'${LETTERS[i]}'`, `${counts[0][i]} / ${counts[1][i]}`], color: same ? "var(--good)" : "var(--bad)",
+                message: same
+                    ? `'${LETTERS[i]}' is used by both words (letters used by neither are skipped).`
+                    : `'${LETTERS[i]}' is used by word${used[0] ? 1 : 2} only. Operation 2 can't create or remove a letter → not close.`
+            });
+            if (!same) {
+                log.push(`'${LETTERS[i]}' used by one word only → false`);
+                return steps;
+            }
+        }
+        log.push("Same letters used");
+
+        const sorted = counts.map(row => [...row].sort((a, b) => a - b));
+        compareSortedSteps(record, log, () => [wordsGroup(), { rows: arrayRows(counts, null, states) }], sorted[0], sorted[1], true);
+        return steps;
+    }
+
+    // Counts plus one Int whose bit i says "letter i is used", mirrors solution/CloseStringsBitMask.kt.
+    function buildBitMaskSteps() {
+        const { steps, log, record } = recorder();
+        record({ groups: [wordsGroup()], message: "First check the lengths, then count both words and set bit char - 'a' of a mask per word." });
+        if (!lengthStep(record, log)) {
+            return steps;
+        }
+
+        const counts = [Array(26).fill(0), Array(26).fill(0)];
+        const masks = [0, 0];
+        // bits drawn with 'a' on the left like the counts, so bit i is the i-th cell
+        const maskRows = (highlight, states = []) => masks.map((mask, w) => ({
+            label: `mask${w + 1}`,
+            cells: [...LETTERS].map((letter, i) => {
+                const bit = (mask >> i) & 1;
+                return { text: bit, sub: letter, state: states[i] || (highlight && highlight.w === w && highlight.i === i ? "active" : bit ? "" : "faded") };
+            })
+        }));
+        const tables = (char, w) => {
+            const highlight = { w, i: char.charCodeAt(0) - 97 };
+            return [{ rows: [...arrayRows(counts, highlight), ...maskRows(highlight)] }];
+        };
+        countSteps(record, log, tables, (w, char) => {
+            const i = char.charCodeAt(0) - 97;
+            masks[w] |= 1 << i;
+            return ++counts[w][i];
+        }, (char, count) => `counts[${char.charCodeAt(0) - 97}] = ${count}, mask or (1 shl ${char.charCodeAt(0) - 97})`);
+
+        // one comparison of the two masks, the differing bits are mask1 xor mask2
+        const diff = masks[0] ^ masks[1];
+        const states = [...LETTERS].map((_, i) => (diff >> i) & 1 ? "bad" : (masks[0] >> i) & 1 ? "ok" : "");
+        const binary = mask => mask.toString(2).padStart(Math.max(1, 32 - Math.clz32(masks[0] | masks[1])), "0");
+        const fixed = () => [wordsGroup(), { rows: [...arrayRows(counts), ...maskRows(null, states)] }];
+        log.push(`mask1 = ${binary(masks[0])}, mask2 = ${binary(masks[1])}` + (diff ? " → false" : ""));
+        record({
+            groups: fixed(), result: diff ? false : null, stats: ["mask", "–", `${binary(masks[0])} vs ${binary(masks[1])}`],
+            color: diff ? "var(--bad)" : "var(--good)",
+            message: diff
+                ? `mask1 ≠ mask2: ${[...LETTERS].filter((_, i) => (diff >> i) & 1).map(l => `'${l}'`).join(", ")} used by one word only → not close.`
+                : `mask1 == mask2 (${binary(masks[0])}, bit 0 = 'a' on the right): both words use the same letters, checked with a single comparison.`
+        });
+        if (diff) {
+            return steps;
+        }
+
+        const sorted = counts.map(row => [...row].sort((a, b) => a - b));
+        compareSortedSteps(record, log, fixed, sorted[0], sorted[1], true);
+        return steps;
+    }
+
+    const STRATEGIES = {
+        hashmap: {
+            build: buildHashMapSteps,
+            check: "bitmask",
+            description: `Strategy shown (<code>solution/CloseStringsHashMap.kt</code>): count both words in a
+                <strong style="color: var(--p1)">hash map</strong>, the key sets must be equal and the
+                <strong style="color: var(--p2)">sorted counts</strong> too. O(n) time, O(1) space (≤ 26 keys).`
+        },
+        array: {
+            build: buildArraySteps,
+            check: "hashmap",
+            description: `Strategy shown (<code>solution/CloseStringsFrequencyArray.kt</code>): count into
+                <strong style="color: var(--p1)">IntArray(26)</strong>, a letter must be used by both words or neither,
+                then the <strong style="color: var(--p2)">sorted arrays</strong> must be equal. O(n) time, O(1) space.`
+        },
+        bitmask: {
+            build: buildBitMaskSteps,
+            check: "hashmap",
+            description: `Strategy shown (<code>solution/CloseStringsBitMask.kt</code>): while counting, set
+                <strong style="color: var(--cursor)">bit char - 'a'</strong> of a mask, so the letter sets are compared with
+                a single <code>==</code>, then the <strong style="color: var(--p2)">sorted counts</strong>. O(n) time, O(1) space.`
+        }
+    };
+
+    function el(name, attrs = {}, text) {
+        const node = document.createElementNS(SVG_NS, name);
+        for (const [key, value] of Object.entries(attrs)) {
+            node.setAttribute(key, value);
+        }
+        if (text !== undefined) {
+            node.textContent = text;
+        }
+        return node;
+    }
+
+    const STYLES = {
+        current: { fill: "var(--p1)", fillOpacity: 0.18, stroke: "var(--p1)", width: 3 },
+        active: { fill: "var(--cursor)", fillOpacity: 0.25, stroke: "var(--cursor)", width: 3 },
+        ok: { fill: "var(--good)", fillOpacity: 0.15, stroke: "var(--good)", width: 2 },
+        bad: { fill: "var(--bad)", fillOpacity: 0.18, stroke: "var(--bad)", width: 3 },
+        done: { fill: "var(--muted)", fillOpacity: 0.12, stroke: "var(--border)", width: 2 },
+        faded: { fill: "var(--panel)", fillOpacity: 1, stroke: "var(--border)", width: 2, opacity: 0.35 },
+        "": { fill: "var(--panel)", fillOpacity: 1, stroke: "var(--border)", width: 2 }
+    };
+
+    function cell(svg, x, y, w, { text, sub, state = "" }) {
+        const style = STYLES[state];
+        const opacity = style.opacity || 1;
+        svg.append(el("rect", {
+            x: x + 2, y, width: w - 4, height: CELL_H, rx: 5, fill: style.fill, "fill-opacity": style.fillOpacity,
+            stroke: style.stroke, "stroke-width": style.width, opacity
+        }));
+        svg.append(el("text", {
+            x: x + w / 2, y: y + CELL_H / 2 + 5, "text-anchor": "middle", "font-family": "ui-monospace, monospace",
+            "font-size": Math.min(16, w * 0.55), "font-weight": 600, fill: "var(--text)", opacity
+        }, text));
+        if (sub) {
+            svg.append(el("text", {
+                x: x + w / 2, y: y + CELL_H + 12, "text-anchor": "middle", "font-size": Math.min(11, w * 0.45), fill: "var(--muted)", opacity
+            }, sub));
+        }
+    }
+
+    // height of a group: rows with letters under the cells need more space
+    const rowHeight = row => CELL_H + (row.cells.some(c => c.sub) ? 20 : 8);
+    const groupHeight = group => group.rows.reduce((sum, row) => sum + rowHeight(row), 0) + 16;
+
+    function renderChart(step) {
+        const svg = document.getElementById("chart");
+        svg.replaceChildren();
+
+        // the chart keeps the height of the tallest step, so it doesn't jump while stepping
+        const height = Math.max(...steps.map(s => s.groups.reduce((sum, g) => sum + groupHeight(g), 0))) + 10;
+        svg.setAttribute("viewBox", `0 0 ${W} ${height}`);
+
+        let y = 12;
+        for (const group of step.groups) {
+            const cellCount = Math.max(8, ...group.rows.map(row => row.cells.length));
+            const cw = Math.min(40, (W - LEFT - 15) / cellCount);
+            for (const row of group.rows) {
+                svg.append(el("text", {
+                    x: LEFT - 10, y: y + CELL_H / 2 + 4, "text-anchor": "end", "font-size": 12, fill: "var(--muted)"
+                }, row.label));
+                if (!row.cells.length) {
+                    svg.append(el("text", { x: LEFT + 4, y: y + CELL_H / 2 + 4, "font-size": 13, fill: "var(--muted)" }, "empty"));
+                }
+                row.cells.forEach((c, i) => cell(svg, LEFT + i * cw, y, cw, c));
+                y += rowHeight(row);
+            }
+            y += 16;
+        }
+    }
+
+    function render() {
+        const step = steps[current];
+        const isDone = current === steps.length - 1;
+        const config = STRATEGIES[strategy];
+
+        renderChart(step);
+
+        step.stats.forEach((value, i) => {
+            document.getElementById(`stat${i}`).textContent = value;
+        });
+        const counter = document.getElementById("counter");
+        counter.textContent = step.result === null ? "–" : String(step.result);
+        counter.className = `value counter ${step.result === null ? "" : step.result}`;
+
+        const message = document.getElementById("message");
+        message.textContent = step.message;
+        message.style.borderLeftColor = step.color || "";
+
+        // cross-check with the final answer of another strategy
+        let resultText = "";
+        if (isDone) {
+            const checkSteps = STRATEGIES[config.check].build();
+            const expected = checkSteps[checkSteps.length - 1].result;
+            const checkName = document.querySelector(`[data-strategy="${config.check}"]`).textContent.toLowerCase();
+            resultText = `Result = ${step.result} ${step.result === expected ? "✓" : "✗"} (${checkName} cross-check: ${expected})`;
+        }
+        document.getElementById("result").textContent = resultText;
+
+        const list = document.getElementById("log");
+        list.replaceChildren(...step.log.map(entry => {
+            const item = document.createElement("li");
+            item.textContent = entry;
+            return item;
+        }));
+        document.getElementById("noLog").style.display = step.log.length ? "none" : "block";
+
+        document.getElementById("reset").disabled = current === 0;
+        document.getElementById("back").disabled = current === 0;
+        document.getElementById("next").disabled = isDone;
+    }
+
+    // rebuild the snapshots for the current input and strategy, start from the beginning
+    function rebuild() {
+        stop();
+        steps = STRATEGIES[strategy].build();
+        current = 0;
+        render();
+    }
+
+    function load(newWord1, newWord2) {
+        word1 = newWord1;
+        word2 = newWord2;
+        document.getElementById("custom1").value = word1;
+        document.getElementById("custom2").value = word2;
+        document.getElementById("error").textContent = "";
+        rebuild();
+    }
+
+    function selectStrategy(name) {
+        strategy = STRATEGIES[name] ? name : "bitmask";
+        document.querySelectorAll("[data-strategy]").forEach(tab => {
+            tab.setAttribute("aria-selected", tab.dataset.strategy === strategy);
+        });
+        document.getElementById("strategy").innerHTML = STRATEGIES[strategy].description;
+        try {
+            history.replaceState(null, "", `#${strategy}`);
+        } catch (e) {
+            // some browsers block history changes for pages opened from disk, the tab still works
+        }
+    }
+
+    function go(index) {
+        current = Math.max(0, Math.min(steps.length - 1, index));
+        render();
+    }
+
+    function play() {
+        if (current === steps.length - 1) {
+            current = 0;
+        }
+        document.getElementById("play").textContent = "⏸ Pause";
+        timer = setInterval(() => {
+            if (current >= steps.length - 1) {
+                stop();
+                return;
+            }
+            go(current + 1);
+        }, 800);
+    }
+
+    function stop() {
+        clearInterval(timer);
+        timer = null;
+        document.getElementById("play").textContent = "▶ Play";
+    }
+
+    function parseWord(text, name) {
+        const value = text.trim();
+        if (!/^[a-z]+$/.test(value)) {
+            throw new Error(`${name} must be at least one lowercase English letter a–z, no spaces.`);
+        }
+        if (value.length > 20) {
+            throw new Error(`Keep ${name} to 20 letters or fewer so the chart stays readable.`);
+        }
+        return value;
+    }
+
+    const shuffle = chars => [...chars].sort(() => Math.random() - 0.5).join("");
+
+    // word2 is either close (shuffled, plus the counts of two letters swapped via operation 2)
+    // or most likely not close (one character changed to another letter)
+    function randomWords() {
+        const letters = shuffle("abcdefg").slice(0, 3 + Math.floor(Math.random() * 2));
+        const w1 = shuffle([...letters].flatMap(letter => Array(1 + Math.floor(Math.random() * 3)).fill(letter)));
+        let w2;
+        if (Math.random() < 0.5) {
+            const [x, y] = shuffle(letters);
+            w2 = [...w1].map(char => char === x ? y : char === y ? x : char).join("");
+        } else {
+            const chars = [...w1];
+            chars[Math.floor(Math.random() * chars.length)] = shuffle("abcdefgh")[0];
+            w2 = chars.join("");
+        }
+        return [w1, shuffle(w2)];
+    }
+
+    document.querySelectorAll("[data-strategy]").forEach(tab => {
+        tab.addEventListener("click", () => {
+            selectStrategy(tab.dataset.strategy);
+            rebuild();
+        });
+    });
+
+    document.querySelectorAll("[data-example]").forEach(button => {
+        button.addEventListener("click", () => load(...button.dataset.example.split(",")));
+    });
+
+    document.getElementById("random").addEventListener("click", () => load(...randomWords()));
+
+    document.getElementById("load").addEventListener("click", () => {
+        try {
+            load(parseWord(document.getElementById("custom1").value, "word1"), parseWord(document.getElementById("custom2").value, "word2"));
+        } catch (e) {
+            document.getElementById("error").textContent = e.message;
+        }
+    });
+
+    for (const id of ["custom1", "custom2"]) {
+        document.getElementById(id).addEventListener("keydown", e => {
+            if (e.key === "Enter") {
+                document.getElementById("load").click();
+            }
+        });
+    }
+
+    document.getElementById("reset").addEventListener("click", () => {
+        stop();
+        go(0);
+    });
+    document.getElementById("back").addEventListener("click", () => {
+        stop();
+        go(current - 1);
+    });
+    document.getElementById("next").addEventListener("click", () => {
+        stop();
+        go(current + 1);
+    });
+    document.getElementById("play").addEventListener("click", () => (timer ? stop() : play()));
+
+    document.addEventListener("keydown", e => {
+        if (e.target.tagName === "INPUT") {
+            return;
+        }
+        if (e.key === "ArrowRight") {
+            stop();
+            go(current + 1);
+        } else if (e.key === "ArrowLeft") {
+            stop();
+            go(current - 1);
+        } else if (e.key === " ") {
+            e.preventDefault();
+            timer ? stop() : play();
+        }
+    });
+
+    // the selected tab is kept in the URL hash, e.g. CloseStrings.html#hashmap
+    selectStrategy(location.hash.slice(1));
+    load("cabbba", "abbccc");
+</script>
+</body>
+</html>
