@@ -33,6 +33,39 @@ S: O(n) - the indices
 
 fun substringCount(n: Int): Long = n.toLong() * (n + 1) / 2
 
+// every substring, by start and end: allSubstrings("abc") = ["a", "ab", "abc", "b", "bc", "c"]
+// O(n³): n(n + 1) / 2 substrings, and each one is a copy of up to n characters
+fun allSubstrings(s: String): List<String> {
+    val result = mutableListOf<String>()
+    for (start in s.indices) {
+        for (end in start + 1..s.length) {
+            result.add(s.substring(start, end))
+        }
+    }
+    return result
+}
+
+// the same list as in the bruteforce solution: for every start, one call per character extends the substring
+// the recursion is up to n deep, so a long string overflows the stack
+fun allSubstringsRecursive(s: String): List<String> {
+    val result = mutableListOf<String>()
+
+    fun extend(index: Int, current: StringBuilder) {
+        if (index == s.length) {
+            return
+        }
+
+        current.append(s[index])
+        result.add(current.toString())
+        extend(index + 1, current)
+    }
+
+    for (start in s.indices) {
+        extend(start, StringBuilder())
+    }
+    return result
+}
+
 // substrings containing index, but neither prev nor next: substringsBetween(-1, 1, 3) = 4 ("ab", "abc", "b", "bc")
 fun substringsBetween(prev: Int, index: Int, next: Int): Long = (index - prev).toLong() * (next - index)
 

@@ -38,3 +38,5 @@ replay_pid*
 local.properties
 /.idea/git_toolbox_prj.xml
 /.idea/noctule.xml
+/lectures/
+lecture.toml

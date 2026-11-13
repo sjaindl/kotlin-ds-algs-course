@@ -1,5 +1,7 @@
 package toolbox.string.runners
 
+import toolbox.string.allSubstrings
+import toolbox.string.allSubstringsRecursive
 import toolbox.string.charCounts
 import toolbox.string.countKey
 import toolbox.string.expand
@@ -27,7 +29,7 @@ fun main() {
     println("  groupByKey(countKey)  = ${groupByKey(words, ::countKey)}")
     val counts1 = letterCounts("eat")
     val counts2 = letterCounts("tea")
-    println("  IntArray keys equal: ${counts1 == counts2}, as List: ${counts1.toList() == counts2.toList()}")
+    println("  IntArray keys equal: ${counts1.contentEquals(counts2)}, as List: ${counts1.toList() == counts2.toList()}")
     println("  isAnagram(\"anagram\", \"nagaram\") = ${isAnagram("anagram", "nagaram")}")
     println()
 
@@ -45,6 +47,8 @@ fun main() {
 
     println("Contribution technique")
     println("  substringCount(3) = ${substringCount(3)}, substringCount(10^5) = ${substringCount(100_000)}")
+    println("  allSubstrings(\"abc\") = ${allSubstrings("abc")}")
+    println("  allSubstringsRecursive(\"abc\") = ${allSubstringsRecursive("abc")}")
     println("  substringsBetween(-1, 1, 3) = ${substringsBetween(-1, 1, 3)} (index 1 of \"ABC\", no boundaries)")
     val s = "LEETCODE"
     val indices = indicesByChar(s)

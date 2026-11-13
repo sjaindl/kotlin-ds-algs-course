@@ -36,8 +36,8 @@ class StringToolboxTest {
         assertNotEquals(countKey("eat"), countKey("tan"))
 
         // arrays compare by reference, lists by content
-        assertFalse(letterCounts("eat") == letterCounts("tea"))
-        assertTrue(letterCounts("eat").toList() == letterCounts("tea").toList())
+        assertFalse(letterCounts("eat").contentEquals(letterCounts("tea")))
+        assertEquals(letterCounts("eat").toList(), letterCounts("tea").toList())
     }
 
     @Test
@@ -103,6 +103,24 @@ class StringToolboxTest {
         assertEquals(1L, substringsBetween(-1, 0, 1)) // single char
         assertEquals(1L, substringsBetween(1, 2, 3)) // both neighbours are boundaries: only the char itself
         assertEquals(2_500_050_000L, substringsBetween(-1, 49_999, 100_000)) // overflows an Int
+    }
+
+    @Test
+    fun `all substrings`() {
+        assertEquals(listOf("a", "ab", "abc", "b", "bc", "c"), allSubstrings("abc"))
+        assertEquals(listOf("a", "aa", "a"), allSubstrings("aa")) // equal substrings are listed again
+        assertEquals(listOf("z"), allSubstrings("z")) // single char
+        assertEquals(emptyList(), allSubstrings("")) // empty
+        assertEquals(substringCount(10), allSubstrings("abcdefghij").size.toLong())
+    }
+
+    @Test
+    fun `all substrings recursive`() {
+        assertEquals(listOf("a", "ab", "abc", "b", "bc", "c"), allSubstringsRecursive("abc"))
+        assertEquals(emptyList(), allSubstringsRecursive("")) // empty
+        listOf("z", "aa", "ABA", "LEETCODE").forEach { s ->
+            assertEquals(allSubstrings(s), allSubstringsRecursive(s), s) // same list, same order
+        }
     }
 
     @Test
