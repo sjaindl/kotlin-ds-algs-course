@@ -40,3 +40,7 @@ local.properties
 /.idea/noctule.xml
 /lectures/
 lecture.toml
+# Local agent instructions
+CLAUDE.local.md
+CLAUDE.md
+AGENTS.md
