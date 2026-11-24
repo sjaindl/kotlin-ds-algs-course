@@ -1,0 +1,640 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Palindrome Pairs</title>
+<link rel="icon" type="image/png" href="../../../../../../udemy.png">
+<link rel="stylesheet" href="../../visualizer.css">
+<style>
+    :root {
+        --p1: #3b6fd8;
+        --p2: #9333ea;
+        --counter: var(--good);
+    }
+
+    @media (prefers-color-scheme: dark) {
+        :root {
+            --p1: #6d9bff;
+            --p2: #c084fc;
+        }
+    }
+
+    .legend {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px 16px;
+        justify-content: center;
+        margin: 4px 0 0;
+        font-size: 0.85rem;
+    }
+
+    .legend span::before {
+        content: "";
+        display: inline-block;
+        width: 12px;
+        height: 12px;
+        margin-right: 6px;
+        vertical-align: -1px;
+        border-radius: 3px;
+        border: 2px solid var(--chip);
+        background: color-mix(in srgb, var(--chip) 20%, transparent);
+    }
+</style>
+</head>
+<body>
+<main>
+    <h1>Find all pairs of words that form a palindrome</h1>
+    <div class="card">
+        <p>You are given a 0-indexed array of unique strings <code>words</code>.</p>
+        <p>
+            A palindrome pair is a pair of integers <code>(i, j)</code> such that <code>0 &lt;= i, j &lt; words.length</code>,
+            <code>i != j</code>, and <code>words[i] + words[j]</code> (the concatenation of the two strings) is a palindrome.
+        </p>
+        <p>Return an array of all the palindrome pairs of words.</p>
+        <p>You must write an algorithm with O(sum of words[i].length) runtime complexity.</p>
+    </div>
+
+    <div class="tabs" role="tablist">
+        <button class="tab" role="tab" data-strategy="bruteforce">Bruteforce</button>
+        <button class="tab" role="tab" data-strategy="hashMap">Hash map</button>
+    </div>
+    <p class="subtitle" id="strategy"></p>
+
+    <div class="card">
+        <div class="row">
+            <button data-example='abcd,dcba,lls,s,sssll'>Example 1</button>
+            <button data-example='bat,tab,cat'>Example 2</button>
+            <button data-example='a,""'>Example 3</button>
+            <button id="random">Random</button>
+            <input id="custom" placeholder='Custom words, e.g. lls,s,sssll or a,"" for the empty word'>
+            <button id="load">Load</button>
+        </div>
+        <div class="error" id="error"></div>
+    </div>
+
+    <div class="card">
+        <svg id="chart" viewBox="0 0 800 330" role="img" aria-label="Words being paired"></svg>
+        <p class="legend muted" id="legend"></p>
+        <div class="row controls">
+            <button id="reset" title="Reset">⏮ Reset</button>
+            <button id="back" title="Back (←)">◀ Back</button>
+            <button id="play" class="primary" title="Play / Pause (Space)">▶ Play</button>
+            <button id="next" title="Next (→)">Next ▶</button>
+        </div>
+        <p class="muted hint">
+            Keyboard: <kbd>←</kbd> <kbd>→</kbd> step, <kbd>Space</kbd> play / pause
+        </p>
+    </div>
+
+    <div class="card">
+        <div class="grid">
+            <div class="stat">
+                <div class="label" id="label0"></div>
+                <div class="value" id="stat0">–</div>
+            </div>
+            <div class="stat">
+                <div class="label" id="label1"></div>
+                <div class="value" id="stat1">–</div>
+            </div>
+            <div class="stat">
+                <div class="label" id="label2"></div>
+                <div class="value" id="stat2">–</div>
+            </div>
+            <div class="stat">
+                <div class="label">Pairs found</div>
+                <div class="value counter" id="counter">0</div>
+            </div>
+        </div>
+        <div class="message" id="message"></div>
+        <div class="result" id="result"></div>
+        <div style="margin-top: 12px">
+            <strong>Log</strong>
+            <ol id="log"></ol>
+            <div class="muted" id="noLog">Nothing found yet.</div>
+        </div>
+    </div>
+</main>
+
+<script>
+    const SVG_NS = "http://www.w3.org/2000/svg";
+    const W = 800;
+    const WORDS_Y = 30;     // top of the word cards
+    const LETTERS_Y = 132;  // top of the letter row
+    const CARD_H = 44;
+    const MAX_WORDS = 8;
+    const MAX_LENGTH = 8;
+
+    let words = [];
+    let strategy = "hashMap";
+    let steps = [];     // snapshot after each step, steps[0] = before the first action
+    let current = 0;
+    let timer = null;
+
+    const quote = word => `"${word}"`;
+    const reverse = word => [...word].reverse().join("");
+    const formatPair = ([i, j]) => `[${i}, ${j}]`;
+    const sortPairs = pairs => [...pairs].sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+
+    function isPalindrome(word, from = 0, to = word.length - 1) {
+        while (from < to) {
+            if (word[from] !== word[to]) {
+                return false;
+            }
+            from++;
+            to--;
+        }
+        return true;
+    }
+
+    // Every builder records snapshots of the same shape, so one renderer draws all strategies:
+    //   cards:   per word "first" | "second" | "current" | "hit" | ""
+    //   letters: [{ ch, part, state }] part "p1" | "p2" | "notPalindrome" | "", state "match" | "mismatch" | ""
+    //   spans:   [{ from, to, label, color }] brackets under the letters
+    //   lookup:  { key, text, color } the hash map lookup of this step
+    //   formed:  { text, color } the concatenation that was checked or found
+    function recorder(n) {
+        const steps = [];
+        const log = [];
+        const pairs = [];
+        const record = fields => steps.push({
+            log: [...log], pairs: [...pairs],
+            cards: Array(n).fill(""), letters: [], spans: [], lookup: null, formed: null,
+            stats: ["–", "–", "–"], color: null,
+            ...fields
+        });
+        return { steps, log, pairs, record };
+    }
+
+    // Every pair in both orders, mirrors solution/PalindromePairsBruteforce.kt.
+    function buildBruteforceSteps(words) {
+        const n = words.length;
+        const { steps, log, pairs, record } = recorder(n);
+        let comparisons = 0;
+
+        record({ stats: ["–", "–", 0], message: `Try all ${n * (n - 1)} ordered pairs: concatenate, then check with two pointers.` });
+
+        for (let i = 0; i < n; i++) {
+            for (let j = i + 1; j < n; j++) {
+                for (const [a, b] of [[i, j], [j, i]]) {
+                    const text = words[a] + words[b];
+                    const letters = [...text].map((ch, k) => ({ ch, part: k < words[a].length ? "p1" : "p2", state: "" }));
+
+                    // two pointers from both ends: every compared pair of letters is coloured
+                    let left = 0;
+                    let right = text.length - 1;
+                    let palindrome = true;
+                    while (left < right) {
+                        comparisons++;
+                        const same = text[left] === text[right];
+                        letters[left].state = letters[right].state = same ? "match" : "mismatch";
+                        if (!same) {
+                            palindrome = false;
+                            break;
+                        }
+                        left++;
+                        right--;
+                    }
+
+                    const cards = words.map((_, k) => k === a ? (palindrome ? "hit" : "first") : k === b ? (palindrome ? "hit" : "second") : "");
+                    const spans = [];
+                    if (words[a].length) {
+                        spans.push({ from: 0, to: words[a].length - 1, label: `words[${a}]`, color: "var(--p1)" });
+                    }
+                    if (words[b].length) {
+                        spans.push({ from: words[a].length, to: text.length - 1, label: `words[${b}]`, color: "var(--p2)" });
+                    }
+                    const sum = `${quote(words[a])} + ${quote(words[b])} = ${quote(text)}`;
+                    if (palindrome) {
+                        pairs.push([a, b]);
+                        log.push(`${formatPair([a, b])}: ${sum}`);
+                    }
+                    record({
+                        cards, letters, spans, stats: [`${a}, ${b}`, quote(text), comparisons],
+                        formed: { text: palindrome ? `${sum} ✓` : `${sum} ✗`, color: palindrome ? "var(--good)" : "var(--bad)" },
+                        color: palindrome ? "var(--good)" : "var(--bad)",
+                        message: palindrome
+                            ? `${sum} reads the same from both ends → palindrome pair ${formatPair([a, b])}.`
+                            : `${sum}: "${text[left]}" ≠ "${text[right]}" at positions ${left} and ${right} → not a palindrome.`
+                    });
+                }
+            }
+        }
+
+        record({
+            stats: ["done", "–", comparisons], color: "var(--good)",
+            message: `Done: ${pairs.length} pair${pairs.length === 1 ? "" : "s"} after trying every pair, ${comparisons} letter comparisons.`
+        });
+        return steps;
+    }
+
+    // Full reverse, palindromic prefixes and suffixes, mirrors solution/PalindromePairsHashMap.kt.
+    function buildHashMapSteps(words) {
+        const n = words.length;
+        const { steps, log, pairs, record } = recorder(n);
+        const wordIndex = new Map(words.map((word, index) => [word, index]));
+        let lookups = 0;
+
+        record({
+            stats: ["–", "–", 0],
+            message: "wordIndex maps every word to its index (the cards above). For every word, look up only the partners that can work."
+        });
+
+        words.forEach((word, index) => {
+            // one step: the letters split at a cut, the lookup of key and the pair it would give
+            const step = (branch, letters, spans, key, toPair, why) => {
+                const cards = words.map((_, k) => k === index ? "current" : "");
+                if (key === null) {
+                    record({ cards, letters, spans, stats: [quote(word), branch, lookups], color: "var(--muted)", message: why });
+                    return;
+                }
+                lookups++;
+                const match = wordIndex.get(key);
+                let lookup;
+                let formed = null;
+                let color;
+                let message;
+                if (match === undefined) {
+                    lookup = { key, text: "missing", color: "var(--bad)" };
+                    color = "var(--bad)";
+                    message = `${why} ${quote(key)}, which is not in wordIndex.`;
+                } else if (match === index) {
+                    lookup = { key, text: `${match}, the word itself`, color: "var(--muted)" };
+                    color = "var(--muted)";
+                    message = `${why} ${quote(key)}, the word itself → skip, i != j.`;
+                } else {
+                    const pair = toPair(match);
+                    const sum = `${quote(words[pair[0]])} + ${quote(words[pair[1]])} = ${quote(words[pair[0]] + words[pair[1]])}`;
+                    pairs.push(pair);
+                    log.push(`${formatPair(pair)}: ${sum}`);
+                    cards[match] = "hit";
+                    lookup = { key, text: `${match} ✓`, color: "var(--good)" };
+                    formed = { text: sum, color: "var(--good)" };
+                    color = "var(--good)";
+                    message = `${why} ${quote(key)}, which is word ${match} → pair ${formatPair(pair)}: ${sum}.`;
+                }
+                record({ cards, letters, spans, lookup, formed, stats: [quote(word), branch, lookups], color, message });
+            };
+            const lettersOf = partOf => [...word].map((ch, k) => ({ ch, part: partOf(k), state: "" }));
+            const last = word.length - 1;
+
+            // 1. the full reverse
+            step("reverse", lettersOf(() => "p1"), word.length ? [{ from: 0, to: last, label: "word", color: "var(--p1)" }] : [],
+                reverse(word), match => [index, match], `The full reverse of ${quote(word)} is`);
+
+            // 2. palindromic prefix word[0..p]: the reverse of the rest goes in front
+            for (let p = 0; p < word.length; p++) {
+                const prefix = word.slice(0, p + 1);
+                const rest = word.slice(p + 1);
+                const palindrome = isPalindrome(word, 0, p);
+                const spans = [{ from: 0, to: p, label: "prefix", color: palindrome ? "var(--p1)" : "var(--bad)" }];
+                if (rest.length) {
+                    spans.push({ from: p + 1, to: last, label: "rest", color: "var(--p2)" });
+                }
+                step("prefix", lettersOf(k => k <= p ? (palindrome ? "p1" : "notPalindrome") : "p2"), spans,
+                    palindrome ? reverse(rest) : null, match => [match, index],
+                    palindrome
+                        ? `Prefix ${quote(prefix)} is a palindrome, the rest ${quote(rest)} reversed is`
+                        : `Prefix ${quote(prefix)} is not a palindrome → no lookup.`);
+            }
+
+            // 3. palindromic suffix word[s..]: the reverse of the front goes behind
+            for (let s = last; s >= 0; s--) {
+                const suffix = word.slice(s);
+                const front = word.slice(0, s);
+                const palindrome = isPalindrome(word, s, last);
+                const spans = [{ from: s, to: last, label: "suffix", color: palindrome ? "var(--p1)" : "var(--bad)" }];
+                if (front.length) {
+                    spans.unshift({ from: 0, to: s - 1, label: "front", color: "var(--p2)" });
+                }
+                step("suffix", lettersOf(k => k >= s ? (palindrome ? "p1" : "notPalindrome") : "p2"), spans,
+                    palindrome ? reverse(front) : null, match => [index, match],
+                    palindrome
+                        ? `Suffix ${quote(suffix)} is a palindrome, the front ${quote(front)} reversed is`
+                        : `Suffix ${quote(suffix)} is not a palindrome → no lookup.`);
+            }
+        });
+
+        record({
+            stats: ["done", "–", lookups], color: "var(--good)",
+            message: `Done: ${pairs.length} pair${pairs.length === 1 ? "" : "s"} with ${lookups} map lookups. Every word asked only for the partners that can work, O(k) per word and cut instead of O(n).`
+        });
+        return steps;
+    }
+
+    const STRATEGIES = {
+        bruteforce: {
+            build: buildBruteforceSteps,
+            labels: ["i, j", "words[i] + words[j]", "Letter comparisons"],
+            wordsLabel: "words",
+            legend: [["--p1", "words[i]"], ["--p2", "words[j]"], ["--good", "palindrome / letters match"], ["--bad", "mismatch"]],
+            description: `Strategy shown (<code>solution/PalindromePairsBruteforce.kt</code>): try
+                <strong style="color: var(--p1)">every pair</strong> in both orders and check the concatenation with two
+                pointers. O(n² · k) time, O(k) space.`
+        },
+        hashMap: {
+            build: buildHashMapSteps,
+            labels: ["Word", "Branch", "Map lookups"],
+            wordsLabel: "wordIndex: word → index",
+            legend: [["--cursor", "current word"], ["--p1", "palindromic part"], ["--p2", "part to mirror"], ["--bad", "not a palindrome / missing"], ["--good", "partner found"]],
+            description: `Strategy shown (<code>solution/PalindromePairsHashMap.kt</code>): for every word, look up its
+                full reverse, then the mirror of what is left next to a
+                <strong style="color: var(--p1)">palindromic prefix or suffix</strong>. O(n · k²) time, O(n · k) space.`
+        }
+    };
+
+    function el(name, attrs = {}, text) {
+        const node = document.createElementNS(SVG_NS, name);
+        for (const [key, value] of Object.entries(attrs)) {
+            node.setAttribute(key, value);
+        }
+        if (text !== undefined) {
+            node.textContent = text;
+        }
+        return node;
+    }
+
+    const CARD_STYLES = {
+        first: { color: "var(--p1)", width: 3 },
+        second: { color: "var(--p2)", width: 3 },
+        current: { color: "var(--cursor)", width: 3 },
+        hit: { color: "var(--good)", width: 3 },
+        "": { color: null, width: 2 }
+    };
+
+    const PART_COLORS = { p1: "var(--p1)", p2: "var(--p2)", notPalindrome: "var(--bad)", "": null };
+
+    function renderChart(step) {
+        const svg = document.getElementById("chart");
+        svg.replaceChildren();
+        const label = (y, text) => svg.append(el("text", { x: 20, y, "font-size": 12, "font-weight": 600, fill: "var(--muted)" }, text));
+
+        // the words as cards, with their index: in the hash map tab they are wordIndex
+        label(WORDS_Y - 12, STRATEGIES[strategy].wordsLabel);
+        const n = words.length;
+        const cw = Math.min(110, 760 / n);
+        const left = (W - n * cw) / 2;
+        words.forEach((word, i) => {
+            const { color, width } = CARD_STYLES[step.cards[i]];
+            const x = left + i * cw;
+            svg.append(el("rect", {
+                x: x + 3, y: WORDS_Y, width: cw - 6, height: CARD_H, rx: 6,
+                fill: color || "var(--panel)", "fill-opacity": color ? 0.18 : 1, stroke: color || "var(--border)", "stroke-width": width
+            }));
+            svg.append(el("text", {
+                x: x + cw / 2, y: WORDS_Y + CARD_H / 2 + 6, "text-anchor": "middle", "font-weight": 600,
+                "font-family": "ui-monospace, monospace", "font-size": Math.min(17, (cw - 10) / (Math.max(word.length, 2) * 0.62)),
+                fill: word ? "var(--text)" : "var(--muted)"
+            }, word || '""'));
+            svg.append(el("text", { x: x + cw / 2, y: WORDS_Y + CARD_H + 15, "text-anchor": "middle", "font-size": 11, fill: "var(--muted)" }, i));
+        });
+
+        // the letters of the concatenation or the current word, with brackets for their parts
+        const letters = step.letters;
+        if (letters.length || step.formed || step.lookup) {
+            label(LETTERS_Y - 12, strategy === "bruteforce" ? "concatenation" : "current word");
+        }
+        if (!letters.length && (step.formed || step.lookup)) {
+            svg.append(el("text", { x: W / 2, y: LETTERS_Y + 28, "text-anchor": "middle", fill: "var(--muted)" }, '"" – the empty word'));
+        }
+        const lw = Math.min(44, 760 / Math.max(letters.length, 1));
+        const lleft = (W - letters.length * lw) / 2;
+        letters.forEach(({ ch, part, state }, k) => {
+            const x = lleft + k * lw;
+            const color = state === "match" ? "var(--good)" : state === "mismatch" ? "var(--bad)" : PART_COLORS[part];
+            svg.append(el("rect", {
+                x: x + 2, y: LETTERS_Y, width: lw - 4, height: CARD_H, rx: 6,
+                fill: color || "var(--panel)", "fill-opacity": color ? 0.18 : 1, stroke: color || "var(--border)",
+                "stroke-width": state ? 3 : 2, ...(part === "notPalindrome" ? { "stroke-dasharray": "5 4" } : {})
+            }));
+            svg.append(el("text", {
+                x: x + lw / 2, y: LETTERS_Y + CARD_H / 2 + 7, "text-anchor": "middle", "font-size": 19, "font-weight": 600,
+                "font-family": "ui-monospace, monospace", fill: "var(--text)"
+            }, ch));
+            // the part a letter came from is kept as a coloured bar, even when the letter is coloured by its comparison
+            if (state && PART_COLORS[part]) {
+                svg.append(el("rect", { x: x + 8, y: LETTERS_Y + CARD_H - 7, width: lw - 16, height: 3, rx: 1.5, fill: PART_COLORS[part] }));
+            }
+        });
+        for (const { from, to, label: text, color } of step.spans) {
+            const x1 = lleft + from * lw + 3;
+            const x2 = lleft + (to + 1) * lw - 3;
+            const y = LETTERS_Y + CARD_H + 14;
+            svg.append(el("path", { d: `M${x1},${y - 8} V${y} H${x2} V${y - 8}`, fill: "none", stroke: color, "stroke-width": 2 }));
+            svg.append(el("text", { x: (x1 + x2) / 2, y: y + 17, "text-anchor": "middle", "font-size": 13, "font-weight": 700, fill: color }, text));
+        }
+
+        // the lookup and the concatenation it gives
+        let y = 262;
+        if (step.lookup !== null) {
+            const { key, text, color } = step.lookup;
+            const line = el("text", { x: W / 2, y, "text-anchor": "middle", "font-size": 17, "font-family": "ui-monospace, monospace", fill: "var(--text)" });
+            line.append(el("tspan", {}, `wordIndex[${quote(key)}] → `), el("tspan", { fill: color, "font-weight": 700 }, text));
+            svg.append(line);
+            y += 32;
+        }
+        if (step.formed !== null) {
+            svg.append(el("text", {
+                x: W / 2, y, "text-anchor": "middle", "font-size": 17, "font-weight": 700, "font-family": "ui-monospace, monospace", fill: step.formed.color
+            }, step.formed.text));
+        }
+    }
+
+    function render() {
+        const step = steps[current];
+        const isDone = current === steps.length - 1;
+        const config = STRATEGIES[strategy];
+
+        renderChart(step);
+
+        config.labels.forEach((label, i) => {
+            document.getElementById(`label${i}`).textContent = label;
+            document.getElementById(`stat${i}`).textContent = step.stats[i];
+        });
+        document.getElementById("counter").textContent = step.pairs.length;
+
+        const message = document.getElementById("message");
+        message.textContent = step.message;
+        message.style.borderLeftColor = step.color || "";
+
+        // cross-check against the other approach
+        const [checkName, check] = strategy === "bruteforce" ? ["hash map", buildHashMapSteps] : ["bruteforce", buildBruteforceSteps];
+        const found = sortPairs(step.pairs).map(formatPair).join(", ");
+        const expected = sortPairs(check(words).at(-1).pairs).map(formatPair).join(", ");
+        document.getElementById("result").textContent = isDone
+            ? `Pairs = [${found}] ${found === expected ? "✓" : "✗"} (${checkName} cross-check: [${expected}])`
+            : "";
+
+        const list = document.getElementById("log");
+        list.replaceChildren(...step.log.map(entry => {
+            const item = document.createElement("li");
+            item.textContent = entry;
+            return item;
+        }));
+        document.getElementById("noLog").style.display = step.log.length ? "none" : "block";
+
+        document.getElementById("reset").disabled = current === 0;
+        document.getElementById("back").disabled = current === 0;
+        document.getElementById("next").disabled = isDone;
+    }
+
+    // rebuild the snapshots for the current input and strategy, start from the beginning
+    function rebuild() {
+        stop();
+        steps = STRATEGIES[strategy].build(words);
+        current = 0;
+        render();
+    }
+
+    function load(newWords) {
+        words = newWords;
+        document.getElementById("custom").value = words.map(word => word || '""').join(",");
+        document.getElementById("error").textContent = "";
+        rebuild();
+    }
+
+    function selectStrategy(name) {
+        strategy = STRATEGIES[name] ? name : "hashMap";
+        document.querySelectorAll("[data-strategy]").forEach(tab => {
+            tab.setAttribute("aria-selected", tab.dataset.strategy === strategy);
+        });
+        const config = STRATEGIES[strategy];
+        document.getElementById("strategy").innerHTML = config.description;
+        document.getElementById("legend").replaceChildren(...config.legend.map(([token, text]) => {
+            const chip = document.createElement("span");
+            chip.style.setProperty("--chip", `var(${token})`);
+            chip.textContent = text;
+            return chip;
+        }));
+        try {
+            history.replaceState(null, "", `#${strategy}`);
+        } catch (e) {
+            // some browsers block history changes for pages opened from disk, the tab still works
+        }
+    }
+
+    function go(index) {
+        current = Math.max(0, Math.min(steps.length - 1, index));
+        render();
+    }
+
+    function play() {
+        if (current === steps.length - 1) {
+            current = 0;
+        }
+        document.getElementById("play").textContent = "⏸ Pause";
+        timer = setInterval(() => {
+            if (current >= steps.length - 1) {
+                stop();
+                return;
+            }
+            go(current + 1);
+        }, 800);
+    }
+
+    function stop() {
+        clearInterval(timer);
+        timer = null;
+        document.getElementById("play").textContent = "▶ Play";
+    }
+
+    // comma-separated words, "" (or nothing between two commas) is the empty word
+    function parseWords(text) {
+        const values = text.replace(/[\[\]]/g, "").split(",").map(word => word.trim().replace(/^["']|["']$/g, "").replace(/^["']$/, ""));
+        if (values.length > MAX_WORDS) {
+            throw new Error(`Keep it to ${MAX_WORDS} words or fewer so the cards stay readable.`);
+        }
+        if (values.some(word => !/^[a-z]*$/.test(word) || word.length > MAX_LENGTH)) {
+            throw new Error(`Words must be lowercase letters a–z, at most ${MAX_LENGTH} each.`);
+        }
+        if (new Set(values).size !== values.length) {
+            throw new Error("The words must be unique.");
+        }
+        return values;
+    }
+
+    // short words from a, b, c with some reverses and palindromes mixed in, so that pairs exist
+    function randomWords() {
+        const length = 5 + Math.floor(Math.random() * 3);
+        const result = new Set();
+        const randomWord = () => Array.from({ length: 1 + Math.floor(Math.random() * 3) }, () => "abc"[Math.floor(Math.random() * 3)]).join("");
+        while (result.size < length) {
+            const roll = Math.random();
+            const existing = [...result];
+            if (roll < 0.3 && existing.length) {
+                result.add(reverse(existing[Math.floor(Math.random() * existing.length)]));
+            } else if (roll < 0.45) {
+                const half = randomWord();
+                result.add(half + reverse(half).slice(Math.random() < 0.5 ? 1 : 0));
+            } else if (roll < 0.52) {
+                result.add("");
+            } else {
+                result.add(randomWord());
+            }
+        }
+        return [...result].slice(0, MAX_WORDS).filter(word => word.length <= MAX_LENGTH);
+    }
+
+    document.querySelectorAll("[data-strategy]").forEach(tab => {
+        tab.addEventListener("click", () => {
+            selectStrategy(tab.dataset.strategy);
+            rebuild();
+        });
+    });
+
+    document.querySelectorAll("[data-example]").forEach(button => {
+        button.addEventListener("click", () => load(parseWords(button.dataset.example)));
+    });
+
+    document.getElementById("random").addEventListener("click", () => load(randomWords()));
+
+    document.getElementById("load").addEventListener("click", () => {
+        try {
+            load(parseWords(document.getElementById("custom").value));
+        } catch (e) {
+            document.getElementById("error").textContent = e.message;
+        }
+    });
+
+    document.getElementById("custom").addEventListener("keydown", e => {
+        if (e.key === "Enter") {
+            document.getElementById("load").click();
+        }
+    });
+
+    document.getElementById("reset").addEventListener("click", () => {
+        stop();
+        go(0);
+    });
+    document.getElementById("back").addEventListener("click", () => {
+        stop();
+        go(current - 1);
+    });
+    document.getElementById("next").addEventListener("click", () => {
+        stop();
+        go(current + 1);
+    });
+    document.getElementById("play").addEventListener("click", () => (timer ? stop() : play()));
+
+    document.addEventListener("keydown", e => {
+        if (e.target.tagName === "INPUT") {
+            return;
+        }
+        if (e.key === "ArrowRight") {
+            stop();
+            go(current + 1);
+        } else if (e.key === "ArrowLeft") {
+            stop();
+            go(current - 1);
+        } else if (e.key === " ") {
+            e.preventDefault();
+            timer ? stop() : play();
+        }
+    });
+
+    // the selected tab is kept in the URL hash, e.g. PalindromePairs.html#bruteforce
+    selectStrategy(location.hash.slice(1));
+    load(["abcd", "dcba", "lls", "s", "sssll"]);
+</script>
+</body>
+</html>
