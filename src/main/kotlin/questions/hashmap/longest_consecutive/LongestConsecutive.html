@@ -1,0 +1,740 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Longest Consecutive Sequence</title>
+<link rel="icon" type="image/png" href="../../../../../../udemy.png">
+<link rel="stylesheet" href="../../visualizer.css">
+<style>
+    :root {
+        --run: var(--accent);
+        --checked: #94a3b8;
+        --counter: var(--good);
+    }
+
+    @media (prefers-color-scheme: dark) {
+        :root {
+            --checked: #64748b;
+        }
+    }
+
+    .legend {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px 16px;
+        justify-content: center;
+        margin: 4px 0 0;
+        font-size: 0.85rem;
+    }
+
+    .legend span::before {
+        content: "";
+        display: inline-block;
+        width: 12px;
+        height: 12px;
+        margin-right: 6px;
+        vertical-align: -1px;
+        border-radius: 3px;
+        border: 2px solid var(--chip);
+        background: color-mix(in srgb, var(--chip) 20%, transparent);
+    }
+</style>
+</head>
+<body>
+<main>
+    <h1>Find the longest run of consecutive numbers</h1>
+    <div class="card">
+        <p>
+            Given an unsorted array of integers <code>nums</code>, return the length of the longest consecutive
+            elements sequence.
+        </p>
+        <p>You must write an algorithm that runs in O(n) time.</p>
+    </div>
+
+    <div class="tabs" role="tablist">
+        <button class="tab" role="tab" data-strategy="bruteforce">Bruteforce</button>
+        <button class="tab" role="tab" data-strategy="sorting">Sorting</button>
+        <button class="tab" role="tab" data-strategy="twoSets">Two sets</button>
+    </div>
+    <p class="subtitle" id="strategy"></p>
+
+    <div class="card">
+        <div class="row">
+            <button data-example="100,4,200,1,3,2">Example 1</button>
+            <button data-example="0,3,7,2,5,8,4,6,0,1">Example 2</button>
+            <button data-example="1,0,1,2">Example 3</button>
+            <button id="random">Random</button>
+            <input id="custom" placeholder="Custom nums, e.g. 9,1,4,7,3,2,8,5,6">
+            <button id="load">Load</button>
+        </div>
+        <div class="error" id="error"></div>
+    </div>
+
+    <div class="card">
+        <svg id="chart" viewBox="0 0 800 300" role="img" aria-label="Sequences being counted"></svg>
+        <p class="legend muted" id="legend"></p>
+        <div class="row controls">
+            <button id="reset" title="Reset">⏮ Reset</button>
+            <button id="back" title="Back (←)">◀ Back</button>
+            <button id="play" class="primary" title="Play / Pause (Space)">▶ Play</button>
+            <button id="next" title="Next (→)">Next ▶</button>
+        </div>
+        <p class="muted hint">
+            Keyboard: <kbd>←</kbd> <kbd>→</kbd> step, <kbd>Space</kbd> play / pause
+        </p>
+    </div>
+
+    <div class="card">
+        <div class="grid">
+            <div class="stat">
+                <div class="label" id="label0"></div>
+                <div class="value" id="stat0">–</div>
+            </div>
+            <div class="stat">
+                <div class="label" id="label1"></div>
+                <div class="value" id="stat1">–</div>
+            </div>
+            <div class="stat">
+                <div class="label" id="label2"></div>
+                <div class="value" id="stat2">–</div>
+            </div>
+            <div class="stat">
+                <div class="label">Longest</div>
+                <div class="value counter" id="counter">0</div>
+            </div>
+        </div>
+        <div class="message" id="message"></div>
+        <div class="result" id="result"></div>
+        <div style="margin-top: 12px">
+            <strong>Log</strong>
+            <ol id="log"></ol>
+            <div class="muted" id="noLog">Nothing done yet.</div>
+        </div>
+    </div>
+</main>
+
+<script>
+    const SVG_NS = "http://www.w3.org/2000/svg";
+    const W = 800;
+    const NUMS_Y = 34;      // top of the input row
+    const LINE_Y = 168;     // top of the values row (number line or sorted array)
+    const CELL_H = 46;
+    const MAX_LENGTH = 30;
+    const BOUND = 1e9;
+
+    let nums = [];
+    let strategy = "twoSets";
+    let built = { values: [], steps: [] };  // values of the second row, snapshot after each step
+    let current = 0;
+    let timer = null;
+
+    const distinctSorted = array => [...new Set(array)].sort((a, b) => a - b);
+    const plural = (count, word) => `${count} ${word}${count === 1 ? "" : "s"}`;
+
+    // Every builder records snapshots of the same shape, so one renderer draws all strategies:
+    //   row:     per index of nums   "start" | "scan" | "found" | ""
+    //   line:    per value of row 2  "run" | "start" | "probe" | "checked" | "blocked" | "dup" | "best" | "faded" | ""
+    //   ghost:   { anchor, side, value } a missing neighbour, drawn next to value index anchor
+    //   bracket: { from, to, label, color } the current sequence under row 2
+    function recorder(n, m) {
+        const steps = [];
+        const log = [];
+        const record = (counter, fields) => steps.push({
+            log: [...log], counter,
+            row: Array(n).fill(""), line: Array(m).fill(""), ghost: null, bracket: null,
+            stats: ["–", "–", "–"], color: null,
+            ...fields
+        });
+        return { steps, log, record };
+    }
+
+    // Count down and up from every number, mirrors solution/LongestConsecutiveBruteforce.kt (withChecked = false)
+    // and solution/LongestConsecutiveTwoSets.kt (withChecked = true). Row 2 is the set of distinct values.
+    function buildExpandSteps(input, withChecked) {
+        const n = input.length;
+        const values = distinctSorted(input);
+        const pos = new Map(values.map((value, j) => [value, j]));
+        const { steps, log, record } = recorder(n, values.length);
+        const checked = new Set();
+        let work = 0;
+        let longest = 0;
+        let best = null;
+
+        if (n === 0) {
+            record(0, { message: "nums is empty → longest = 0." });
+            return { values, steps };
+        }
+
+        // the current sequence lo..hi, the start number and the value just looked up
+        const lineFor = (lo, hi, start, probe, blocked) => values.map(value => {
+            if (value === blocked) {
+                return "blocked";
+            }
+            if (value === probe) {
+                return "probe";
+            }
+            if (value === start) {
+                return "start";
+            }
+            if (value >= lo && value <= hi) {
+                return "run";
+            }
+            return checked.has(value) ? "checked" : "";
+        });
+
+        record(0, {
+            stats: ["–", "–", 0],
+            message: withChecked
+                ? `numSet = the ${plural(values.length, "distinct number")} of nums, checked = {}. Every lookup is O(1).`
+                : "From every number, count down and up. Every nums.contains scans the array from the left."
+        });
+
+        input.forEach((num, i) => {
+            let lo = num;
+            let hi = num;
+            let length = 1;
+            const startRow = input.map((_, k) => k === i ? "start" : "");
+            const bracket = color => ({ from: pos.get(lo), to: pos.get(hi), label: `current = ${length}`, color });
+            const snap = fields => record(longest, {
+                stats: [num, length, work], row: startRow, bracket: bracket("var(--run)"), ...fields
+            });
+
+            snap({ line: lineFor(lo, hi, num), color: "var(--run)", message: `Start at nums[${i}] = ${num}: current = 1.` });
+
+            for (const dir of [-1, 1]) {
+                const way = dir < 0 ? "down" : "up";
+                while (true) {
+                    const target = dir < 0 ? lo - 1 : hi + 1;
+                    const edge = pos.get(dir < 0 ? lo : hi);
+
+                    if (!withChecked) {
+                        // nums.contains(target) reads the array until it finds target, or to the end
+                        const index = input.indexOf(target);
+                        const scanned = index < 0 ? n : index + 1;
+                        work += scanned;
+                        const row = input.map((_, k) => k === index ? "found" : k === i ? "start" : k < scanned ? "scan" : "");
+                        if (index < 0) {
+                            snap({
+                                row, line: lineFor(lo, hi, num), ghost: { anchor: edge, side: dir, value: target }, color: "var(--bad)",
+                                message: `nums.contains(${target}): read all ${n} numbers, not found → stop going ${way}.`
+                            });
+                            break;
+                        }
+                        length++;
+                        dir < 0 ? lo = target : hi = target;
+                        snap({
+                            row, line: lineFor(lo, hi, num, target), color: "var(--cursor)",
+                            message: `nums.contains(${target}): read ${plural(scanned, "number")}, found at index ${index} → current = ${length}.`
+                        });
+                        continue;
+                    }
+
+                    // target in numSet && target !in checked, the second lookup only runs if the first is true
+                    work++;
+                    if (!pos.has(target)) {
+                        snap({
+                            line: lineFor(lo, hi, num), ghost: { anchor: edge, side: dir, value: target }, color: "var(--bad)",
+                            message: `${target} is not in numSet → stop going ${way}.`
+                        });
+                        break;
+                    }
+                    work++;
+                    if (checked.has(target)) {
+                        snap({
+                            line: lineFor(lo, hi, num, null, target), color: "var(--bad)",
+                            message: `${target} is in numSet, but already checked: its sequence was counted before → stop going ${way}.`
+                        });
+                        break;
+                    }
+                    checked.add(target);
+                    length++;
+                    dir < 0 ? lo = target : hi = target;
+                    snap({
+                        line: lineFor(lo, hi, num, target), color: "var(--cursor)",
+                        message: `${target} is in numSet and not checked → current = ${length}, add ${target} to checked.`
+                    });
+                }
+            }
+
+            const better = length > longest;
+            if (better) {
+                longest = length;
+                best = [lo, hi];
+            }
+            const range = lo === hi ? `${lo}` : `${lo}..${hi}`;
+            log.push(`Start ${num}: ${range}, current = ${length}` + (better ? ` → longest = ${longest}` : ""));
+            snap({
+                line: lineFor(lo, hi, num), color: better ? "var(--good)" : "var(--muted)",
+                bracket: bracket(better ? "var(--good)" : "var(--muted)"),
+                message: better
+                    ? `current = ${length} is longer than before → longest = ${longest}.`
+                    : `current = ${length} ≤ longest = ${longest}, longest stays.`
+            });
+        });
+
+        record(longest, {
+            stats: ["done", "–", work], color: "var(--good)",
+            line: values.map(value => value >= best[0] && value <= best[1] ? "best" : ""),
+            bracket: { from: pos.get(best[0]), to: pos.get(best[1]), label: `longest = ${longest}`, color: "var(--good)" },
+            message: withChecked
+                ? `Done: longest = ${longest} with ${plural(work, "set lookup")}: O(n) in total, because every number is checked only once.`
+                : `Done: longest = ${longest}, but it took ${plural(work, "array read")}.`
+        });
+        return { values, steps };
+    }
+
+    // Sort, then walk the sorted array once, mirrors solution/LongestConsecutiveSorting.kt.
+    // Row 2 is the sorted array, duplicates included.
+    function buildSortingSteps(input) {
+        const n = input.length;
+        const sorted = [...input].sort((a, b) => a - b);
+        const { steps, log, record } = recorder(n, n);
+        const dups = new Set();
+        let comparisons = 0;
+        let longest = 0;
+        let best = [0, 0];
+
+        if (n === 0) {
+            record(0, { message: "nums is empty → return 0." });
+            return { values: sorted, steps };
+        }
+
+        // the streak from index start to index, later indices not reached yet
+        const lineFor = (start, index) => sorted.map((_, k) => {
+            if (k > index) {
+                return "faded";
+            }
+            if (dups.has(k)) {
+                return "dup";
+            }
+            if (k === index) {
+                return "probe";
+            }
+            return k >= start ? "run" : "";
+        });
+        const bracketFor = (start, index, streak, color) => ({ from: start, to: index, label: `streak = ${streak}`, color });
+
+        let cur = sorted[0];
+        let streak = 1;
+        let start = 0;
+        record(0, {
+            stats: [0, 1, 0], line: lineFor(0, 0), bracket: bracketFor(0, 0, 1, "var(--run)"), color: "var(--run)",
+            message: `Sorted: [${sorted.join(", ")}]. Start with cur = ${cur}, streak = 1.`
+        });
+
+        for (let index = 1; index < n; index++) {
+            const value = sorted[index];
+            let message;
+            let color = "var(--cursor)";
+            comparisons++;
+            if (value === cur + 1) {
+                streak++;
+                message = `${value} = cur + 1 → the streak grows to ${streak}.`;
+            } else {
+                comparisons++;
+                if (value > cur + 1) {
+                    const better = streak > longest;
+                    if (better) {
+                        longest = streak;
+                        best = [start, index - 1];
+                    }
+                    log.push(`Streak ${sorted[start]}..${cur} ends with ${streak}` + (better ? ` → longest = ${longest}` : ""));
+                    message = `${value} > cur + 1 = ${cur + 1}: a gap, the streak of ${streak} ends` +
+                        (better ? ` → longest = ${longest}.` : `, longest stays ${longest}.`) + " New streak = 1.";
+                    streak = 1;
+                    start = index;
+                    color = "var(--bad)";
+                } else {
+                    dups.add(index);
+                    message = `${value} = cur: a duplicate, the streak neither grows nor ends.`;
+                    color = "var(--muted)";
+                }
+            }
+            cur = value;
+            record(longest, {
+                stats: [index, streak, comparisons], line: lineFor(start, index), color,
+                bracket: bracketFor(start, index, streak, "var(--run)"), message
+            });
+        }
+
+        if (streak > longest) {
+            longest = streak;
+            best = [start, n - 1];
+        }
+        log.push(`Last streak ${sorted[start]}..${cur} ends with ${streak} → longest = ${longest}`);
+        record(longest, {
+            stats: ["done", streak, comparisons], color: "var(--good)",
+            line: sorted.map((_, k) => dups.has(k) ? "dup" : k >= best[0] && k <= best[1] ? "best" : ""),
+            bracket: { from: best[0], to: best[1], label: `longest = ${longest}`, color: "var(--good)" },
+            message: `End of the array: max(longest, streak) = ${longest}. The ${plural(comparisons, "comparison")} are cheap, the O(n log n) sort is the cost.`
+        });
+        return { values: sorted, steps };
+    }
+
+    const STRATEGIES = {
+        bruteforce: {
+            build: input => buildExpandSteps(input, false),
+            labels: ["num", "current", "Array reads"],
+            lineLabel: "values",
+            legend: [["--cursor", "start / found"], ["--run", "current sequence"], ["--checked", "read by contains"], ["--bad", "missing"], ["--good", "longest"]],
+            description: `Strategy shown (<code>solution/LongestConsecutiveBruteforce.kt</code>): from every number,
+                <strong style="color: var(--run)">count down and up</strong> while <code>nums.contains</code> finds the
+                next value. Every contains scans the array. O(n³) time, O(1) space.`
+        },
+        sorting: {
+            build: buildSortingSteps,
+            labels: ["index", "streak", "Comparisons"],
+            lineLabel: "sorted",
+            legend: [["--cursor", "current value"], ["--run", "current streak"], ["--checked", "duplicate"], ["--good", "longest"]],
+            description: `Strategy shown (<code>solution/LongestConsecutiveSorting.kt</code>): sort, then
+                <strong style="color: var(--run)">walk the sorted array once</strong>: + 1 grows the streak, an equal
+                value is skipped, a gap ends it. O(n log n) time, O(n) space.`
+        },
+        twoSets: {
+            build: input => buildExpandSteps(input, true),
+            labels: ["num", "current", "Set lookups"],
+            lineLabel: "numSet",
+            legend: [["--cursor", "start / found"], ["--run", "current sequence"], ["--checked", "checked"], ["--bad", "missing / already checked"], ["--good", "longest"]],
+            description: `Strategy shown (<code>solution/LongestConsecutiveTwoSets.kt</code>): count down and up with
+                O(1) lookups in <code>numSet</code>, and stop at numbers that are already
+                <strong style="color: var(--checked)">checked</strong>, so every number is walked only once. O(n) time, O(n) space.`
+        }
+    };
+
+    // Plain versions of the solutions for the cross-check at the end.
+    function longestSorting(input) {
+        const sorted = [...input].sort((a, b) => a - b);
+        let longest = 0;
+        let streak = 0;
+        sorted.forEach((value, k) => {
+            if (k === 0 || value > sorted[k - 1] + 1) {
+                streak = 1;
+            } else if (value === sorted[k - 1] + 1) {
+                streak++;
+            }
+            longest = Math.max(longest, streak);
+        });
+        return longest;
+    }
+
+    function longestTwoSets(input) {
+        const numSet = new Set(input);
+        const checked = new Set();
+        let longest = 0;
+        for (const num of input) {
+            let length = 1;
+            for (let prev = num - 1; numSet.has(prev) && !checked.has(prev); prev--) {
+                length++;
+                checked.add(prev);
+            }
+            for (let next = num + 1; numSet.has(next) && !checked.has(next); next++) {
+                length++;
+                checked.add(next);
+            }
+            longest = Math.max(longest, length);
+        }
+        return longest;
+    }
+
+    function el(name, attrs = {}, text) {
+        const node = document.createElementNS(SVG_NS, name);
+        for (const [key, value] of Object.entries(attrs)) {
+            node.setAttribute(key, value);
+        }
+        if (text !== undefined) {
+            node.textContent = text;
+        }
+        return node;
+    }
+
+    const fontSize = (value, width, max) => Math.min(max, (width - 6) / (String(value).length * 0.62));
+
+    function cell(svg, x, y, width, value, { color = null, fillOpacity = 0.18, strokeWidth = 2, opacity = 1, dashed = false, max = 17 }) {
+        svg.append(el("rect", {
+            x: x + 2, y, width: width - 4, height: CELL_H, rx: 6, opacity,
+            fill: color || "var(--panel)", "fill-opacity": color ? fillOpacity : 1,
+            stroke: color || "var(--border)", "stroke-width": strokeWidth, ...(dashed ? { "stroke-dasharray": "5 4" } : {})
+        }));
+        svg.append(el("text", {
+            x: x + width / 2, y: y + CELL_H / 2 + 6, "text-anchor": "middle", opacity,
+            "font-size": fontSize(value, width, max), "font-weight": 600, fill: dashed && color ? color : "var(--text)"
+        }, value));
+    }
+
+    // x position of every value in row 2: one free slot at both ends and in every gap between non-consecutive values
+    function lineLayout(values) {
+        const slots = [];
+        let unit = 1;
+        values.forEach((value, j) => {
+            if (j > 0 && value > values[j - 1] + 1) {
+                unit++;
+            }
+            slots.push(unit);
+            unit++;
+        });
+        const width = Math.min(64, 760 / (unit + 1));
+        const left = (W - (unit + 1) * width) / 2;
+        return { width, x: j => left + slots[j] * width, gaps: slots.map((slot, j) => j > 0 && slot > slots[j - 1] + 1) };
+    }
+
+    const LINE_STYLES = {
+        run: { color: "var(--run)" },
+        start: { color: "var(--cursor)", fillOpacity: 0.12, strokeWidth: 3 },
+        probe: { color: "var(--cursor)", fillOpacity: 0.3, strokeWidth: 3 },
+        checked: { color: "var(--checked)", fillOpacity: 0.3, opacity: 0.7 },
+        blocked: { color: "var(--bad)", fillOpacity: 0.15, strokeWidth: 3 },
+        dup: { color: "var(--checked)", opacity: 0.45, dashed: true },
+        best: { color: "var(--good)", fillOpacity: 0.2, strokeWidth: 3 },
+        faded: { opacity: 0.35 },
+        "": {}
+    };
+
+    const ROW_STYLES = {
+        start: { color: "var(--cursor)", fillOpacity: 0.2, strokeWidth: 3 },
+        scan: { color: "var(--checked)", fillOpacity: 0.25 },
+        found: { color: "var(--good)", fillOpacity: 0.25, strokeWidth: 3 },
+        "": {}
+    };
+
+    function renderChart(step) {
+        const svg = document.getElementById("chart");
+        svg.replaceChildren();
+        const label = (y, text) => svg.append(el("text", { x: 20, y, "font-size": 12, "font-weight": 600, fill: "var(--muted)" }, text));
+
+        // row 1: the input array with its indices
+        const n = nums.length;
+        label(NUMS_Y - 14, "nums");
+        if (n === 0) {
+            svg.append(el("text", { x: W / 2, y: NUMS_Y + 30, "text-anchor": "middle", fill: "var(--muted)" }, "[ ] – no numbers"));
+        }
+        const cw = Math.min(64, 760 / Math.max(n, 1));
+        const left = (W - n * cw) / 2;
+        nums.forEach((value, i) => {
+            cell(svg, left + i * cw, NUMS_Y, cw, value, ROW_STYLES[step.row[i]]);
+            svg.append(el("text", { x: left + i * cw + cw / 2, y: NUMS_Y + CELL_H + 15, "text-anchor": "middle", "font-size": 11, fill: "var(--muted)" }, i));
+            if (step.row[i] === "start") {
+                svg.append(el("text", {
+                    x: left + i * cw + cw / 2, y: NUMS_Y + CELL_H + 32, "text-anchor": "middle", "font-size": 12, "font-weight": 700, fill: "var(--cursor)"
+                }, "▲ num"));
+            }
+        });
+
+        // row 2: distinct values or the sorted array, with a break wherever the sequence has a gap
+        const values = built.values;
+        if (values.length === 0) {
+            return;
+        }
+        label(LINE_Y - 26, STRATEGIES[strategy].lineLabel);
+        const { width, x, gaps } = lineLayout(values);
+        values.forEach((value, j) => {
+            if (gaps[j]) {
+                svg.append(el("text", {
+                    x: x(j) - width / 2, y: LINE_Y + CELL_H / 2 + 6, "text-anchor": "middle", "font-size": 16, fill: "var(--muted)"
+                }, "⋯"));
+            }
+            cell(svg, x(j), LINE_Y, width, value, LINE_STYLES[step.line[j]]);
+            if (step.line[j] === "checked" || step.line[j] === "blocked") {
+                svg.append(el("text", {
+                    x: x(j) + width / 2, y: LINE_Y - 6, "text-anchor": "middle", "font-size": 12, "font-weight": 700,
+                    fill: step.line[j] === "blocked" ? "var(--bad)" : "var(--checked)"
+                }, "✓"));
+            }
+        });
+
+        // a neighbour that is missing, drawn in the free slot next to the sequence
+        if (step.ghost !== null) {
+            const gx = x(step.ghost.anchor) + step.ghost.side * width;
+            svg.append(el("rect", { x: gx - 1, y: LINE_Y - 2, width: width + 2, height: CELL_H + 4, fill: "var(--panel)" }));
+            cell(svg, gx, LINE_Y, width, step.ghost.value, { color: "var(--bad)", fillOpacity: 0.06, dashed: true });
+            svg.append(el("text", { x: gx + width / 2, y: LINE_Y - 6, "text-anchor": "middle", "font-size": 12, "font-weight": 700, fill: "var(--bad)" }, "✗"));
+        }
+
+        // bracket under the current sequence
+        if (step.bracket !== null) {
+            const { from, to, label: text, color } = step.bracket;
+            const x1 = x(from) + 3;
+            const x2 = x(to) + width - 3;
+            const y = LINE_Y + CELL_H + 18;
+            svg.append(el("path", { d: `M${x1},${y - 8} V${y} H${x2} V${y - 8}`, fill: "none", stroke: color, "stroke-width": 2 }));
+            svg.append(el("text", {
+                x: Math.max(60, Math.min(W - 60, (x1 + x2) / 2)), y: y + 20, "text-anchor": "middle", "font-size": 13, "font-weight": 700, fill: color
+            }, text));
+        }
+    }
+
+    function render() {
+        const steps = built.steps;
+        const step = steps[current];
+        const isDone = current === steps.length - 1;
+        const config = STRATEGIES[strategy];
+
+        renderChart(step);
+
+        config.labels.forEach((label, i) => {
+            document.getElementById(`label${i}`).textContent = label;
+            document.getElementById(`stat${i}`).textContent = step.stats[i];
+        });
+        document.getElementById("counter").textContent = step.counter;
+
+        const message = document.getElementById("message");
+        message.textContent = step.message;
+        message.style.borderLeftColor = step.color || "";
+
+        const [checkName, check] = strategy === "sorting" ? ["two sets", longestTwoSets] : ["sorting", longestSorting];
+        const expected = check(nums);
+        document.getElementById("result").textContent = isDone
+            ? `Longest = ${step.counter} ${step.counter === expected ? "✓" : "✗"} (${checkName} cross-check: ${expected})`
+            : "";
+
+        const list = document.getElementById("log");
+        list.replaceChildren(...step.log.map(entry => {
+            const item = document.createElement("li");
+            item.textContent = entry;
+            return item;
+        }));
+        document.getElementById("noLog").style.display = step.log.length ? "none" : "block";
+
+        document.getElementById("reset").disabled = current === 0;
+        document.getElementById("back").disabled = current === 0;
+        document.getElementById("next").disabled = isDone;
+    }
+
+    // rebuild the snapshots for the current input and strategy, start from the beginning
+    function rebuild() {
+        stop();
+        built = STRATEGIES[strategy].build(nums);
+        current = 0;
+        render();
+    }
+
+    function load(newNums) {
+        nums = newNums;
+        document.getElementById("custom").value = nums.join(",");
+        document.getElementById("error").textContent = "";
+        rebuild();
+    }
+
+    function selectStrategy(name) {
+        strategy = STRATEGIES[name] ? name : "twoSets";
+        document.querySelectorAll("[data-strategy]").forEach(tab => {
+            tab.setAttribute("aria-selected", tab.dataset.strategy === strategy);
+        });
+        const config = STRATEGIES[strategy];
+        document.getElementById("strategy").innerHTML = config.description;
+        document.getElementById("legend").replaceChildren(...config.legend.map(([token, text]) => {
+            const chip = document.createElement("span");
+            chip.style.setProperty("--chip", `var(${token})`);
+            chip.textContent = text;
+            return chip;
+        }));
+        try {
+            history.replaceState(null, "", `#${strategy}`);
+        } catch (e) {
+            // some browsers block history changes for pages opened from disk, the tab still works
+        }
+    }
+
+    function go(index) {
+        current = Math.max(0, Math.min(built.steps.length - 1, index));
+        render();
+    }
+
+    function play() {
+        if (current === built.steps.length - 1) {
+            current = 0;
+        }
+        document.getElementById("play").textContent = "⏸ Pause";
+        timer = setInterval(() => {
+            if (current >= built.steps.length - 1) {
+                stop();
+                return;
+            }
+            go(current + 1);
+        }, 800);
+    }
+
+    function stop() {
+        clearInterval(timer);
+        timer = null;
+        document.getElementById("play").textContent = "▶ Play";
+    }
+
+    function parseCustom(text) {
+        const values = text.replace(/[\[\]]/g, " ").split(/[\s,]+/).filter(Boolean).map(Number);
+        if (values.length > MAX_LENGTH) {
+            throw new Error(`Keep it to ${MAX_LENGTH} numbers or fewer so the rows stay readable.`);
+        }
+        if (values.some(v => !Number.isInteger(v) || Math.abs(v) > BOUND)) {
+            throw new Error("Numbers must be whole numbers between -10^9 and 10^9.");
+        }
+        return values;
+    }
+
+    document.querySelectorAll("[data-strategy]").forEach(tab => {
+        tab.addEventListener("click", () => {
+            selectStrategy(tab.dataset.strategy);
+            rebuild();
+        });
+    });
+
+    document.querySelectorAll("[data-example]").forEach(button => {
+        button.addEventListener("click", () => load(button.dataset.example.split(",").map(Number)));
+    });
+
+    // small values, so the random input has sequences and some duplicates
+    document.getElementById("random").addEventListener("click", () => {
+        const length = 6 + Math.floor(Math.random() * 7);
+        load(Array.from({ length }, () => Math.floor(Math.random() * 20)));
+    });
+
+    document.getElementById("load").addEventListener("click", () => {
+        try {
+            load(parseCustom(document.getElementById("custom").value));
+        } catch (e) {
+            document.getElementById("error").textContent = e.message;
+        }
+    });
+
+    document.getElementById("custom").addEventListener("keydown", e => {
+        if (e.key === "Enter") {
+            document.getElementById("load").click();
+        }
+    });
+
+    document.getElementById("reset").addEventListener("click", () => {
+        stop();
+        go(0);
+    });
+    document.getElementById("back").addEventListener("click", () => {
+        stop();
+        go(current - 1);
+    });
+    document.getElementById("next").addEventListener("click", () => {
+        stop();
+        go(current + 1);
+    });
+    document.getElementById("play").addEventListener("click", () => (timer ? stop() : play()));
+
+    document.addEventListener("keydown", e => {
+        if (e.target.tagName === "INPUT") {
+            return;
+        }
+        if (e.key === "ArrowRight") {
+            stop();
+            go(current + 1);
+        } else if (e.key === "ArrowLeft") {
+            stop();
+            go(current - 1);
+        } else if (e.key === " ") {
+            e.preventDefault();
+            timer ? stop() : play();
+        }
+    });
+
+    // the selected tab is kept in the URL hash, e.g. LongestConsecutive.html#sorting
+    selectStrategy(location.hash.slice(1));
+    load([100, 4, 200, 1, 3, 2]);
+</script>
+</body>
+</html>
