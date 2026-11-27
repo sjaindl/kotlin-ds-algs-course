@@ -81,7 +81,7 @@
             <button id="next" title="Next (→)">Next ▶</button>
         </div>
         <p class="muted hint">
-            Keyboard: <kbd>←</kbd> <kbd>→</kbd> step, <kbd>Space</kbd> play / pause
+            Keyboard: <kbd>←</kbd> <kbd>→</kbd> step, <kbd>Space</kbd> play / pause, <kbd>End</kbd> last step
         </p>
     </div>
 
@@ -729,6 +729,10 @@
         } else if (e.key === " ") {
             e.preventDefault();
             timer ? stop() : play();
+        } else if (e.key === "End") {
+            // straight to the result, e.g. for long inputs in a recorded walkthrough
+            stop();
+            go(built.steps.length - 1);
         }
     });
 

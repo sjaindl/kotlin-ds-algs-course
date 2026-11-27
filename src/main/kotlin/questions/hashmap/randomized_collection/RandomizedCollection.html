@@ -1,0 +1,713 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Randomized Collection</title>
+<link rel="icon" type="image/png" href="../../../../../../udemy.png">
+<link rel="stylesheet" href="../../visualizer.css">
+<style>
+    :root {
+        --moved: #3b6fd8;
+        --counter: var(--accent);
+    }
+
+    @media (prefers-color-scheme: dark) {
+        :root {
+            --moved: #6d9bff;
+        }
+    }
+
+    .legend {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px 16px;
+        justify-content: center;
+        margin: 4px 0 0;
+        font-size: 0.85rem;
+    }
+
+    .legend span::before {
+        content: "";
+        display: inline-block;
+        width: 12px;
+        height: 12px;
+        margin-right: 6px;
+        vertical-align: -1px;
+        border-radius: 3px;
+        border: 2px solid var(--chip);
+        background: color-mix(in srgb, var(--chip) 20%, transparent);
+    }
+</style>
+</head>
+<body>
+<main>
+    <h1>Design a multiset with insert, remove and getRandom</h1>
+    <div class="card">
+        <p>
+            RandomizedCollection is a data structure that contains a collection of numbers, possibly duplicates (i.e., a
+            multiset). It should support inserting and removing specific elements and also reporting a random element.
+        </p>
+        <p>
+            <code>insert(val)</code> inserts an item val into the multiset, even if the item is already present. Returns
+            true if the item is not present, false otherwise.
+        </p>
+        <p>
+            <code>remove(val)</code> removes an item val from the multiset if present. Returns true if the item is
+            present, false otherwise. Note that if val has multiple occurrences in the multiset, we only remove one of them.
+        </p>
+        <p>
+            <code>getRandom()</code> returns a random element from the current multiset of elements. The probability of
+            each element being returned is linearly related to the number of the same values the multiset contains.
+        </p>
+        <p>You must implement the functions of the class such that each function works on average O(1) time complexity.</p>
+    </div>
+
+    <div class="tabs" role="tablist">
+        <button class="tab" role="tab" data-strategy="bruteforce">Bruteforce</button>
+        <button class="tab" role="tab" data-strategy="hashMap">Hash map</button>
+    </div>
+    <p class="subtitle" id="strategy"></p>
+
+    <div class="card">
+        <div class="row">
+            <button data-example='insert 1, insert 1, insert 2, getRandom, remove 1, getRandom'>Example 1</button>
+            <button data-example='insert 1, insert 2, insert 1, insert 2, remove 1, remove 2, getRandom'>Duplicates</button>
+            <button data-example='insert 1, insert 2, insert 1, remove 1, remove 3'>Same value</button>
+            <button id="random">Random</button>
+            <input id="custom" placeholder="Operations, e.g. insert 1, insert 1, remove 1, getRandom">
+            <button id="load">Load</button>
+        </div>
+        <div class="error" id="error"></div>
+    </div>
+
+    <div class="card">
+        <svg id="chart" viewBox="0 0 800 330" role="img" aria-label="The list of numbers and the map of indices"></svg>
+        <p class="legend muted" id="legend"></p>
+        <div class="row controls">
+            <button id="reset" title="Reset">⏮ Reset</button>
+            <button id="back" title="Back (←)">◀ Back</button>
+            <button id="play" class="primary" title="Play / Pause (Space)">▶ Play</button>
+            <button id="next" title="Next (→)">Next ▶</button>
+        </div>
+        <p class="muted hint">
+            Keyboard: <kbd>←</kbd> <kbd>→</kbd> step, <kbd>Space</kbd> play / pause, <kbd>End</kbd> last step
+        </p>
+    </div>
+
+    <div class="card">
+        <div class="grid">
+            <div class="stat">
+                <div class="label">Operation</div>
+                <div class="value" id="stat0">–</div>
+            </div>
+            <div class="stat">
+                <div class="label">Returned</div>
+                <div class="value" id="stat1">–</div>
+            </div>
+            <div class="stat">
+                <div class="label">Size</div>
+                <div class="value" id="stat2">–</div>
+            </div>
+            <div class="stat">
+                <div class="label">List cells touched</div>
+                <div class="value counter" id="counter">0</div>
+            </div>
+        </div>
+        <div class="message" id="message"></div>
+        <div class="result" id="result"></div>
+        <div style="margin-top: 12px">
+            <strong>Log</strong>
+            <ol id="log"></ol>
+            <div class="muted" id="noLog">Nothing done yet.</div>
+        </div>
+    </div>
+</main>
+
+<script>
+    const SVG_NS = "http://www.w3.org/2000/svg";
+    const W = 800;
+    const OPS_Y = 26;      // top of the operation chips
+    const NUMBERS_Y = 100; // top of the list cells
+    const MAP_Y = 226;     // top of the index map
+    const CELL_H = 44;
+    const MAX_OPS = 10;
+    const SEED = 381;      // getRandom is seeded, so a run looks the same every time
+
+    let operations = [];   // [{ name: "insert" | "remove" | "getRandom", value }]
+    let strategy = "hashMap";
+    let steps = [];        // snapshot after each step, steps[0] = before the first operation
+    let current = 0;
+    let timer = null;
+
+    const callText = ({ name, value }) => name === "getRandom" ? "getRandom()" : `${name}(${value})`;
+    const setText = indices => `{${indices.join(", ")}}`;
+
+    // small seeded random number generator (mulberry32), returns a float in [0, 1)
+    function seededRandom(seed) {
+        return () => {
+            seed = (seed + 0x6D2B79F5) | 0;
+            let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+            t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+            return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+        };
+    }
+
+    // Every builder records snapshots of the same shape, so one renderer draws both strategies:
+    //   numbers: the list;  cells: { index: "scan" | "found" | "new" | "gap" | "moved" | "pop" | "picked" }
+    //   entries: [{ value, indices, state, add, drop }] the index map (hash map tab only)
+    //   note:    { text, color } a line under the list, e.g. the contains scan
+    //   line:    { text, color } the call and what it returned
+    function recorder() {
+        const steps = [];
+        const log = [];
+        const returns = [];
+        let touched = 0;
+        const record = (fields, cost = 0) => {
+            touched += cost;
+            steps.push({
+                opIndex: -1, numbers: [], cells: {}, entries: [], note: null, line: null,
+                stats: ["–", "–", 0], color: null, log: [...log], returns: [...returns], touched,
+                ...fields
+            });
+        };
+        return { steps, log, returns, record };
+    }
+
+    // A list only, mirrors solution/RandomizedCollectionBruteforce.kt.
+    function buildBruteforceSteps(operations) {
+        const { steps, log, returns, record } = recorder();
+        const numbers = [];
+        const random = seededRandom(SEED);
+        record({ message: `${operations.length} operations on an empty list.` });
+
+        operations.forEach((operation, opIndex) => {
+            const { name, value } = operation;
+            const call = callText(operation);
+            const base = () => ({ opIndex, numbers: [...numbers] });
+
+            if (name === "insert") {
+                // contains: read cells until value is found, or all of them
+                const found = numbers.indexOf(value);
+                const read = found === -1 ? numbers.length : found + 1;
+                const cells = {};
+                for (let k = 0; k < read; k++) {
+                    cells[k] = k === found ? "found" : "scan";
+                }
+                const isNew = found === -1;
+                record({
+                    ...base(), cells, stats: [call, "–", numbers.length],
+                    note: { text: `${value} in list? read ${read} cell${read === 1 ? "" : "s"} → ${isNew ? "no" : `yes, at ${found}`}`, color: "var(--cursor)" },
+                    message: `${call}: is ${value} already in the list? Scan it from the left: ${read} cell${read === 1 ? "" : "s"} read.`
+                }, read);
+                numbers.push(value);
+                returns.push(isNew);
+                log.push(`${call} → ${isNew}`);
+                record({
+                    ...base(), cells: { [numbers.length - 1]: "new" }, stats: [call, String(isNew), numbers.length],
+                    line: { text: `${call} → ${isNew}`, color: isNew ? "var(--good)" : "var(--muted)" }, color: "var(--good)",
+                    message: `Append ${value} at index ${numbers.length - 1}. ${isNew ? "It was not in the list → true." : "It was already in the list → false."}`
+                }, 1);
+            } else if (name === "remove") {
+                const index = numbers.indexOf(value);
+                const read = index === -1 ? numbers.length : index + 1;
+                const cells = {};
+                for (let k = 0; k < read; k++) {
+                    cells[k] = k === index ? "gap" : "scan";
+                }
+                if (index === -1) {
+                    returns.push(false);
+                    log.push(`${call} → false`);
+                    record({
+                        ...base(), cells, stats: [call, "false", numbers.length],
+                        line: { text: `${call} → false`, color: "var(--bad)" }, color: "var(--bad)",
+                        message: `${call}: scanned all ${read} cell${read === 1 ? "" : "s"}, ${value} is not in the list → false.`
+                    }, read);
+                    return;
+                }
+                record({
+                    ...base(), cells, stats: [call, "–", numbers.length],
+                    note: { text: `indexOf(${value}): read ${read} cell${read === 1 ? "" : "s"} → ${index}`, color: "var(--cursor)" },
+                    message: `${call}: find ${value} from the left, at index ${index} after ${read} cell${read === 1 ? "" : "s"} read.`
+                }, read);
+                // removeAt: every element behind the gap moves one cell to the left
+                const shifted = numbers.length - 1 - index;
+                numbers.splice(index, 1);
+                const moved = {};
+                for (let k = index; k < numbers.length; k++) {
+                    moved[k] = "moved";
+                }
+                returns.push(true);
+                log.push(`${call} → true`);
+                record({
+                    ...base(), cells: moved, stats: [call, "true", numbers.length],
+                    note: { text: `removeAt(${index}): ${shifted} element${shifted === 1 ? "" : "s"} shifted left`, color: "var(--moved)" },
+                    line: { text: `${call} → true`, color: "var(--good)" }, color: "var(--good)",
+                    message: `Remove index ${index}: the ${shifted} element${shifted === 1 ? "" : "s"} behind it move one cell to the left.`
+                }, shifted);
+            } else {
+                const index = Math.floor(random() * numbers.length);
+                log.push(`${call} → ${numbers[index]} (index ${index})`);
+                record({
+                    ...base(), cells: { [index]: "picked" }, stats: [call, String(numbers[index]), numbers.length],
+                    line: { text: `${call} → ${numbers[index]}`, color: "var(--good)" }, color: "var(--good)",
+                    message: `Random index ${index} of ${numbers.length} → ${numbers[index]}. A value that is in the list twice is picked twice as often.`
+                }, 1);
+            }
+        });
+
+        record({
+            opIndex: operations.length, numbers: [...numbers], stats: ["done", "–", numbers.length], color: "var(--good)",
+            message: `Done: ${operations.length} operations, ${steps.at(-1).touched} list cells touched.`
+        });
+        return steps;
+    }
+
+    // A list plus a map from value to its indices, mirrors solution/RandomizedCollectionHashMap.kt.
+    function buildHashMapSteps(operations) {
+        const { steps, log, returns, record } = recorder();
+        const numbers = [];
+        const indices = new Map(); // value -> array of indices, in insertion order like a LinkedHashSet
+        const random = seededRandom(SEED);
+        const entries = (highlight = {}) => [...indices].map(([value, set]) => ({
+            value, indices: [...set], state: "", add: null, drop: null, ...(highlight[value] || {})
+        }));
+        record({ message: `${operations.length} operations on an empty list and an empty map.` });
+
+        operations.forEach((operation, opIndex) => {
+            const { name, value } = operation;
+            const call = callText(operation);
+            const base = () => ({ opIndex, numbers: [...numbers] });
+
+            if (name === "insert") {
+                numbers.push(value);
+                const last = numbers.length - 1;
+                const isNew = !indices.has(value) || indices.get(value).length === 0;
+                record({
+                    ...base(), cells: { [last]: "new" }, entries: entries(), stats: [call, "–", numbers.length],
+                    message: `${call}: append ${value} at index ${last}.`
+                }, 1);
+                if (!indices.has(value)) {
+                    indices.set(value, []);
+                }
+                indices.get(value).push(last);
+                returns.push(isNew);
+                log.push(`${call} → ${isNew}`);
+                record({
+                    ...base(), cells: { [last]: "new" }, entries: entries({ [value]: { state: "active", add: last } }),
+                    stats: [call, String(isNew), numbers.length],
+                    line: { text: `${call} → ${isNew}`, color: isNew ? "var(--good)" : "var(--muted)" }, color: "var(--good)",
+                    message: `Add index ${last} to the set of ${value}. ${isNew ? "The set was empty → true." : "The set already had indices → false."}`
+                });
+            } else if (name === "remove") {
+                const set = indices.get(value);
+                if (!set) {
+                    returns.push(false);
+                    log.push(`${call} → false`);
+                    record({
+                        ...base(), entries: entries(), stats: [call, "false", numbers.length],
+                        note: { text: `indices[${value}] → missing`, color: "var(--bad)" },
+                        line: { text: `${call} → false`, color: "var(--bad)" }, color: "var(--bad)",
+                        message: `${call}: the map has no indices for ${value} → false.`
+                    });
+                    return;
+                }
+                const last = numbers.length - 1;
+                const index = set[0];
+                record({
+                    ...base(), cells: { [index]: "gap", ...(index !== last ? { [last]: "pop" } : {}) },
+                    entries: entries({ [value]: { state: "active", drop: index } }), stats: [call, "–", numbers.length],
+                    message: `${call}: take index ${index} out of the set of ${value}. That cell becomes the gap.`
+                });
+                set.shift();
+                if (index !== last) {
+                    // the last element moves into the gap, only its index changes
+                    const moved = numbers[last];
+                    numbers[index] = moved;
+                    const highlight = { [moved]: { state: "moved", drop: last } };
+                    record({
+                        ...base(), cells: { [index]: "moved", [last]: "pop" }, entries: entries(highlight),
+                        stats: [call, "–", numbers.length],
+                        note: { text: `numbers[${index}] = numbers[${last}] = ${moved}`, color: "var(--moved)" },
+                        message: `Move the last element, ${moved} at index ${last}, into the gap at index ${index}.`
+                    }, 1);
+                    const movedSet = indices.get(moved);
+                    movedSet.splice(movedSet.indexOf(last), 1);
+                    movedSet.push(index);
+                    record({
+                        ...base(), cells: { [index]: "moved", [last]: "pop" },
+                        entries: entries({ [moved]: { state: "moved", add: index } }), stats: [call, "–", numbers.length],
+                        message: `Fix the moved element's set: ${moved} is no longer at ${last}, it is at ${index} now.`
+                    });
+                }
+                numbers.pop();
+                const empty = set.length === 0;
+                if (empty) {
+                    indices.delete(value);
+                }
+                returns.push(true);
+                log.push(`${call} → true`);
+                record({
+                    ...base(), entries: entries(), stats: [call, "true", numbers.length],
+                    line: { text: `${call} → true`, color: "var(--good)" }, color: "var(--good)",
+                    message: `Pop the last cell${index === last ? ", it was the gap itself, nothing had to move" : ""}.`
+                        + `${empty ? ` The set of ${value} is empty, so ${value} leaves the map.` : ""} → true.`
+                });
+            } else {
+                const index = Math.floor(random() * numbers.length);
+                log.push(`${call} → ${numbers[index]} (index ${index})`);
+                record({
+                    ...base(), cells: { [index]: "picked" }, entries: entries(), stats: [call, String(numbers[index]), numbers.length],
+                    line: { text: `${call} → ${numbers[index]}`, color: "var(--good)" }, color: "var(--good)",
+                    message: `Random index ${index} of ${numbers.length} → ${numbers[index]}. A value that is in the list twice is picked twice as often.`
+                }, 1);
+            }
+        });
+
+        record({
+            opIndex: operations.length, numbers: [...numbers], entries: entries(), stats: ["done", "–", numbers.length],
+            color: "var(--good)", message: `Done: ${operations.length} operations, ${steps.at(-1).touched} list cells touched.`
+        });
+        return steps;
+    }
+
+    const STRATEGIES = {
+        bruteforce: {
+            build: buildBruteforceSteps,
+            legend: [["--cursor", "scanned"], ["--good", "found / new / picked"], ["--bad", "removed"], ["--moved", "shifted"]],
+            description: `Strategy shown (<code>solution/RandomizedCollectionBruteforce.kt</code>): one
+                <strong style="color: var(--cursor)">list</strong>. insert scans it for the value, remove finds the value and
+                shifts everything behind it. O(n) insert and remove, O(1) getRandom.`
+        },
+        hashMap: {
+            build: buildHashMapSteps,
+            legend: [["--good", "new / picked"], ["--bad", "gap"], ["--moved", "moved into the gap"], ["--muted", "popped"]],
+            description: `Strategy shown (<code>solution/RandomizedCollectionHashMap.kt</code>): a list plus a
+                <strong style="color: var(--moved)">map from value to its indices</strong>. remove moves the last element
+                into the gap and fixes its index. O(1) average for all three.`
+        }
+    };
+
+    function el(name, attrs = {}, text) {
+        const node = document.createElementNS(SVG_NS, name);
+        for (const [key, value] of Object.entries(attrs)) {
+            node.setAttribute(key, value);
+        }
+        if (text !== undefined) {
+            node.textContent = text;
+        }
+        return node;
+    }
+
+    const CELL_COLORS = {
+        scan: "var(--cursor)", found: "var(--good)", new: "var(--good)", picked: "var(--good)",
+        gap: "var(--bad)", moved: "var(--moved)", pop: "var(--muted)"
+    };
+
+    function renderChart(step) {
+        const svg = document.getElementById("chart");
+        svg.replaceChildren();
+        const label = (y, text) => svg.append(el("text", { x: 20, y, "font-size": 12, "font-weight": 600, fill: "var(--muted)" }, text));
+
+        // the operations, the current one framed, the done ones faded
+        label(OPS_Y - 10, "operations");
+        const ow = Math.min(120, 760 / Math.max(operations.length, 1));
+        const oleft = (W - operations.length * ow) / 2;
+        operations.forEach((operation, i) => {
+            const isCurrent = i === step.opIndex;
+            const x = oleft + i * ow;
+            svg.append(el("rect", {
+                x: x + 3, y: OPS_Y, width: ow - 6, height: 30, rx: 6, fill: "var(--panel)",
+                stroke: isCurrent ? "var(--cursor)" : "var(--border)", "stroke-width": isCurrent ? 3 : 1.5
+            }));
+            svg.append(el("text", {
+                x: x + ow / 2, y: OPS_Y + 20, "text-anchor": "middle", "font-family": "ui-monospace, monospace",
+                "font-size": Math.min(13, (ow - 8) / 7.5), fill: i < step.opIndex ? "var(--muted)" : "var(--text)",
+                "font-weight": isCurrent ? 700 : 400
+            }, callText(operation)));
+        });
+
+        // the list, with its indices
+        label(NUMBERS_Y - 10, "numbers");
+        const n = Math.max(step.numbers.length, 1);
+        const cw = Math.min(64, 760 / n);
+        const left = (W - step.numbers.length * cw) / 2;
+        if (!step.numbers.length) {
+            svg.append(el("text", { x: W / 2, y: NUMBERS_Y + 28, "text-anchor": "middle", fill: "var(--muted)" }, "[] – empty"));
+        }
+        step.numbers.forEach((value, i) => {
+            const state = step.cells[i];
+            const color = CELL_COLORS[state];
+            const x = left + i * cw;
+            svg.append(el("rect", {
+                x: x + 3, y: NUMBERS_Y, width: cw - 6, height: CELL_H, rx: 6, fill: color || "var(--panel)",
+                "fill-opacity": color ? 0.18 : 1, stroke: color || "var(--border)", "stroke-width": color ? 3 : 2,
+                ...(state === "pop" || state === "scan" ? { "stroke-dasharray": "5 4" } : {})
+            }));
+            svg.append(el("text", {
+                x: x + cw / 2, y: NUMBERS_Y + CELL_H / 2 + 6, "text-anchor": "middle", "font-weight": 600,
+                "font-family": "ui-monospace, monospace", "font-size": Math.min(17, (cw - 8) / (String(value).length * 0.62)),
+                fill: "var(--text)"
+            }, value));
+            svg.append(el("text", { x: x + cw / 2, y: NUMBERS_Y + CELL_H + 15, "text-anchor": "middle", "font-size": 11, fill: "var(--muted)" }, i));
+        });
+        if (step.note) {
+            svg.append(el("text", {
+                x: W / 2, y: NUMBERS_Y + CELL_H + 40, "text-anchor": "middle", "font-size": 15, "font-family": "ui-monospace, monospace",
+                fill: step.note.color
+            }, step.note.text));
+        }
+
+        // the index map: one box per value, the index added in green, the one taken out struck through in red
+        if (strategy === "hashMap") {
+            label(MAP_Y - 10, "indices: value → set of indices");
+            const bw = 180;
+            const perRow = 4;
+            step.entries.forEach(({ value, indices, state, add, drop }, k) => {
+                const x = 22 + (k % perRow) * (bw + 12);
+                const y = MAP_Y + Math.floor(k / perRow) * 46;
+                const color = state === "active" ? "var(--cursor)" : state === "moved" ? "var(--moved)" : null;
+                svg.append(el("rect", {
+                    x, y, width: bw, height: 36, rx: 6, fill: color || "var(--panel)", "fill-opacity": color ? 0.12 : 1,
+                    stroke: color || "var(--border)", "stroke-width": color ? 3 : 1.5
+                }));
+                const text = el("text", { x: x + 12, y: y + 23, "font-size": 15, "font-family": "ui-monospace, monospace", fill: "var(--text)" });
+                text.append(el("tspan", { "font-weight": 700 }, `${value}`), el("tspan", { fill: "var(--muted)" }, " → {"));
+                const shown = drop !== null && !indices.includes(drop) ? [...indices, drop] : indices;
+                shown.forEach((index, i) => {
+                    const attrs = index === drop ? { fill: "var(--bad)", "text-decoration": "line-through", "font-weight": 700 }
+                        : index === add ? { fill: "var(--good)", "font-weight": 700 } : {};
+                    text.append(el("tspan", attrs, `${index}`));
+                    if (i < shown.length - 1) {
+                        text.append(el("tspan", { fill: "var(--muted)" }, ", "));
+                    }
+                });
+                text.append(el("tspan", { fill: "var(--muted)" }, "}"));
+                svg.append(text);
+            });
+            if (!step.entries.length) {
+                svg.append(el("text", { x: W / 2, y: MAP_Y + 24, "text-anchor": "middle", fill: "var(--muted)" }, "{} – empty"));
+            }
+        }
+
+        if (step.line) {
+            svg.append(el("text", {
+                x: W / 2, y: 318, "text-anchor": "middle", "font-size": 17, "font-weight": 700, "font-family": "ui-monospace, monospace",
+                fill: step.line.color
+            }, step.line.text));
+        }
+    }
+
+    function render() {
+        const step = steps[current];
+        const isDone = current === steps.length - 1;
+
+        renderChart(step);
+
+        step.stats.forEach((value, i) => {
+            document.getElementById(`stat${i}`).textContent = value;
+        });
+        document.getElementById("counter").textContent = step.touched;
+
+        const message = document.getElementById("message");
+        message.textContent = step.message;
+        message.style.borderLeftColor = step.color || "";
+
+        // cross-check the returns of insert and remove against the other approach (getRandom differs by design)
+        const [checkName, check] = strategy === "bruteforce" ? ["hash map", buildHashMapSteps] : ["bruteforce", buildBruteforceSteps];
+        const found = step.returns.join(", ");
+        const expected = check(operations).at(-1).returns.join(", ");
+        document.getElementById("result").textContent = isDone
+            ? `insert / remove returned [${found}] ${found === expected ? "✓" : "✗"} (${checkName} cross-check: [${expected}])`
+            : "";
+
+        const list = document.getElementById("log");
+        list.replaceChildren(...step.log.map(entry => {
+            const item = document.createElement("li");
+            item.textContent = entry;
+            return item;
+        }));
+        document.getElementById("noLog").style.display = step.log.length ? "none" : "block";
+
+        document.getElementById("reset").disabled = current === 0;
+        document.getElementById("back").disabled = current === 0;
+        document.getElementById("next").disabled = isDone;
+    }
+
+    // rebuild the snapshots for the current operations and strategy, start from the beginning
+    function rebuild() {
+        stop();
+        steps = STRATEGIES[strategy].build(operations);
+        current = 0;
+        render();
+    }
+
+    function load(newOperations) {
+        operations = newOperations;
+        document.getElementById("custom").value = operations.map(callText).map(text => text.replace(/\((.*)\)/, " $1").trim()).join(", ");
+        document.getElementById("error").textContent = "";
+        rebuild();
+    }
+
+    function selectStrategy(name) {
+        strategy = STRATEGIES[name] ? name : "hashMap";
+        document.querySelectorAll("[data-strategy]").forEach(tab => {
+            tab.setAttribute("aria-selected", tab.dataset.strategy === strategy);
+        });
+        const config = STRATEGIES[strategy];
+        document.getElementById("strategy").innerHTML = config.description;
+        document.getElementById("legend").replaceChildren(...config.legend.map(([token, text]) => {
+            const chip = document.createElement("span");
+            chip.style.setProperty("--chip", `var(${token})`);
+            chip.textContent = text;
+            return chip;
+        }));
+        try {
+            history.replaceState(null, "", `#${strategy}`);
+        } catch (e) {
+            // some browsers block history changes for pages opened from disk, the tab still works
+        }
+    }
+
+    function go(index) {
+        current = Math.max(0, Math.min(steps.length - 1, index));
+        render();
+    }
+
+    function play() {
+        if (current === steps.length - 1) {
+            current = 0;
+        }
+        document.getElementById("play").textContent = "⏸ Pause";
+        timer = setInterval(() => {
+            if (current >= steps.length - 1) {
+                stop();
+                return;
+            }
+            go(current + 1);
+        }, 800);
+    }
+
+    function stop() {
+        clearInterval(timer);
+        timer = null;
+        document.getElementById("play").textContent = "▶ Play";
+    }
+
+    // "insert 1, remove 2, getRandom": getRandom needs at least one element, like in the task
+    function parseOperations(text) {
+        const parts = text.split(",").map(part => part.trim()).filter(part => part);
+        if (!parts.length || parts.length > MAX_OPS) {
+            throw new Error(`Enter 1 to ${MAX_OPS} operations so the chips stay readable.`);
+        }
+        const counts = new Map(); // what is in the collection so far, to check getRandom
+        return parts.map(part => {
+            const match = part.match(/^(insert|remove)\s*\(?\s*(-?\d{1,3})\s*\)?$|^getRandom\s*(\(\s*\))?$/);
+            if (!match) {
+                throw new Error(`"${part}": use insert <n>, remove <n> or getRandom, with -99 ≤ n ≤ 999.`);
+            }
+            if (!match[1]) {
+                if (![...counts.values()].some(count => count > 0)) {
+                    throw new Error("getRandom needs at least one element in the collection.");
+                }
+                return { name: "getRandom", value: null };
+            }
+            const value = Number(match[2]);
+            if (value < -99) {
+                throw new Error(`"${part}": use insert <n>, remove <n> or getRandom, with -99 ≤ n ≤ 999.`);
+            }
+            counts.set(value, Math.max(0, (counts.get(value) || 0) + (match[1] === "insert" ? 1 : -1)));
+            return { name: match[1], value };
+        });
+    }
+
+    // values 1 to 3 so duplicates and swaps happen, getRandom only when something is in the collection
+    function randomOperations() {
+        const result = [];
+        const counts = new Map();
+        const count = 7 + Math.floor(Math.random() * 4);
+        while (result.length < count) {
+            const value = 1 + Math.floor(Math.random() * 3);
+            const size = [...counts.values()].reduce((a, b) => a + b, 0);
+            const roll = Math.random();
+            if (roll < 0.5 || size === 0) {
+                counts.set(value, (counts.get(value) || 0) + 1);
+                result.push({ name: "insert", value });
+            } else if (roll < 0.85) {
+                if (counts.get(value)) {
+                    counts.set(value, counts.get(value) - 1);
+                }
+                result.push({ name: "remove", value });
+            } else {
+                result.push({ name: "getRandom", value: null });
+            }
+        }
+        return result;
+    }
+
+    document.querySelectorAll("[data-strategy]").forEach(tab => {
+        tab.addEventListener("click", () => {
+            selectStrategy(tab.dataset.strategy);
+            rebuild();
+        });
+    });
+
+    document.querySelectorAll("[data-example]").forEach(button => {
+        button.addEventListener("click", () => load(parseOperations(button.dataset.example)));
+    });
+
+    document.getElementById("random").addEventListener("click", () => load(randomOperations()));
+
+    document.getElementById("load").addEventListener("click", () => {
+        try {
+            load(parseOperations(document.getElementById("custom").value));
+        } catch (e) {
+            document.getElementById("error").textContent = e.message;
+        }
+    });
+
+    document.getElementById("custom").addEventListener("keydown", e => {
+        if (e.key === "Enter") {
+            document.getElementById("load").click();
+        }
+    });
+
+    document.getElementById("reset").addEventListener("click", () => {
+        stop();
+        go(0);
+    });
+    document.getElementById("back").addEventListener("click", () => {
+        stop();
+        go(current - 1);
+    });
+    document.getElementById("next").addEventListener("click", () => {
+        stop();
+        go(current + 1);
+    });
+    document.getElementById("play").addEventListener("click", () => (timer ? stop() : play()));
+
+    document.addEventListener("keydown", e => {
+        if (e.target.tagName === "INPUT") {
+            return;
+        }
+        if (e.key === "ArrowRight") {
+            stop();
+            go(current + 1);
+        } else if (e.key === "ArrowLeft") {
+            stop();
+            go(current - 1);
+        } else if (e.key === " ") {
+            e.preventDefault();
+            timer ? stop() : play();
+        } else if (e.key === "End") {
+            stop();
+            go(steps.length - 1);
+        }
+    });
+
+    // the selected tab is kept in the URL hash, e.g. RandomizedCollection.html#bruteforce
+    selectStrategy(location.hash.slice(1));
+    load(parseOperations("insert 1, insert 1, insert 2, getRandom, remove 1, getRandom"));
+</script>
+</body>
+</html>
