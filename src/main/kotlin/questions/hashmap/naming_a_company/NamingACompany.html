@@ -1,0 +1,613 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Naming a Company</title>
+<link rel="icon" type="image/png" href="../../../../../../udemy.png">
+<link rel="stylesheet" href="../../visualizer.css">
+<style>
+    :root {
+        --p1: #3b6fd8;
+        --p2: #9333ea;
+        --counter: var(--good);
+    }
+
+    @media (prefers-color-scheme: dark) {
+        :root {
+            --p1: #6d9bff;
+            --p2: #c084fc;
+        }
+    }
+
+    .legend {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px 16px;
+        justify-content: center;
+        margin: 4px 0 0;
+        font-size: 0.85rem;
+    }
+
+    .legend span::before {
+        content: "";
+        display: inline-block;
+        width: 12px;
+        height: 12px;
+        margin-right: 6px;
+        vertical-align: -1px;
+        border-radius: 3px;
+        border: 2px solid var(--chip);
+        background: color-mix(in srgb, var(--chip) 20%, transparent);
+    }
+</style>
+</head>
+<body>
+<main>
+    <h1>Count the company names made by swapping first letters</h1>
+    <div class="card">
+        <p>
+            You are given an array of strings <code>ideas</code> that represents a list of names to be used in the process
+            of naming a company. The process of naming a company is as follows:
+        </p>
+        <p>Choose 2 distinct names from <code>ideas</code>, call them <code>ideaA</code> and <code>ideaB</code>.</p>
+        <p>Swap the first letters of <code>ideaA</code> and <code>ideaB</code> with each other.</p>
+        <p>
+            If both of the new names are not found in the original <code>ideas</code>, then the name
+            <code>ideaA ideaB</code> (the concatenation of <code>ideaA</code> and <code>ideaB</code>, separated by a space)
+            is a valid company name. Otherwise, it is not a valid name.
+        </p>
+        <p>Return the number of distinct valid names for the company.</p>
+    </div>
+
+    <div class="tabs" role="tablist">
+        <button class="tab" role="tab" data-strategy="bruteforce">Bruteforce</button>
+        <button class="tab" role="tab" data-strategy="suffixGroups">Suffix groups</button>
+    </div>
+    <p class="subtitle" id="strategy"></p>
+
+    <div class="card">
+        <div class="row">
+            <button data-example="coffee,donuts,time,toffee">Example 1</button>
+            <button data-example="lack,back">Example 2</button>
+            <button id="random">Random</button>
+            <input id="custom" placeholder="Custom ideas, e.g. coffee,donuts,time,toffee">
+            <button id="load">Load</button>
+        </div>
+        <div class="error" id="error"></div>
+    </div>
+
+    <div class="card">
+        <svg id="chart" viewBox="0 0 800 290" role="img" aria-label="Ideas and their swapped names"></svg>
+        <p class="legend muted" id="legend"></p>
+        <div class="row controls">
+            <button id="reset" title="Reset">⏮ Reset</button>
+            <button id="back" title="Back (←)">◀ Back</button>
+            <button id="play" class="primary" title="Play / Pause (Space)">▶ Play</button>
+            <button id="next" title="Next (→)">Next ▶</button>
+        </div>
+        <p class="muted hint">
+            Keyboard: <kbd>←</kbd> <kbd>→</kbd> step, <kbd>Space</kbd> play / pause, <kbd>End</kbd> last step
+        </p>
+    </div>
+
+    <div class="card">
+        <div class="grid">
+            <div class="stat">
+                <div class="label" id="label0"></div>
+                <div class="value" id="stat0">–</div>
+            </div>
+            <div class="stat">
+                <div class="label" id="label1"></div>
+                <div class="value" id="stat1">–</div>
+            </div>
+            <div class="stat">
+                <div class="label" id="label2"></div>
+                <div class="value" id="stat2">–</div>
+            </div>
+            <div class="stat">
+                <div class="label">Valid names</div>
+                <div class="value counter" id="counter">0</div>
+            </div>
+        </div>
+        <div class="message" id="message"></div>
+        <div class="result" id="result"></div>
+        <div style="margin-top: 12px">
+            <strong>Log</strong>
+            <ol id="log"></ol>
+            <div class="muted" id="noLog">Nothing counted yet.</div>
+        </div>
+    </div>
+</main>
+
+<script>
+    const SVG_NS = "http://www.w3.org/2000/svg";
+    const W = 800;
+    const IDEAS_Y = 30;     // top of the idea cards
+    const SWAP_Y = 136;     // top of the swap rows (bruteforce)
+    const GROUPS_Y = 134;   // top of the group rows (suffix groups)
+    const CARD_H = 44;
+    const CELL = 22;        // a letter cell of the swap rows
+    const ROW_H = 36;       // a group row
+    const MAX_IDEAS = 8;
+    const MAX_LENGTH = 10;
+
+    let ideas = [];
+    let strategy = "suffixGroups";
+    let steps = [];     // snapshot after each step, steps[0] = before the first action
+    let current = 0;
+    let timer = null;
+
+    const quote = word => `"${word}"`;
+    const swapFirst = (a, b) => [b[0] + a.slice(1), a[0] + b.slice(1)];
+    const setText = values => `{${[...values].map(quote).join(", ")}}`;
+
+    // Every builder records snapshots of the same shape, so one renderer draws both strategies:
+    //   cards:  per idea "first" | "second" | "current" | "hit" | ""
+    //   swap:   { a, b, names: [newA, newB], exists: [bool, bool] } the swap of a pair (bruteforce)
+    //   groups: [{ letter, suffixes: [{ text, state }], role }] role "first" | "second" | "current" | "", state "shared" | "kept" | "added" | ""
+    //   formed: { text, color } the line under the chart
+    function recorder(n) {
+        const steps = [];
+        const log = [];
+        let count = 0;
+        const record = fields => steps.push({
+            log: [...log], count,
+            cards: Array(n).fill(""), swap: null, groups: null, formed: null,
+            stats: ["–", "–", "–"], color: null,
+            ...fields
+        });
+        return { steps, log, record, add: (value, entry) => {
+            count += value;
+            log.push(entry);
+        } };
+    }
+
+    // Every pair, swapped and looked up in a hash set, mirrors solution/NamingACompanyBruteforce.kt.
+    function buildBruteforceSteps(ideas) {
+        const n = ideas.length;
+        const { steps, record, add } = recorder(n);
+        const ideaSet = new Set(ideas);
+        let lookups = 0;
+
+        record({ stats: ["–", "–", 0], message: `Try all ${n * (n - 1) / 2} pairs: swap their first letters and look both new names up in the ideas.` });
+
+        for (let i = 0; i < n; i++) {
+            for (let j = i + 1; j < n; j++) {
+                const names = swapFirst(ideas[i], ideas[j]);
+                const exists = names.map(name => ideaSet.has(name));
+                lookups += 2;
+                const valid = !exists[0] && !exists[1];
+                const cards = ideas.map((_, k) => k === i ? (valid ? "hit" : "first") : k === j ? (valid ? "hit" : "second") : "");
+                const swap = { a: ideas[i], b: ideas[j], names, exists };
+                const stats = [`${i}, ${j}`, `${names[0]}, ${names[1]}`, lookups];
+
+                if (valid) {
+                    add(2, `${quote(`${ideas[i]} ${ideas[j]}`)} and ${quote(`${ideas[j]} ${ideas[i]}`)}`);
+                    record({
+                        cards, swap, stats, color: "var(--good)",
+                        formed: { text: `${quote(`${ideas[i]} ${ideas[j]}`)} and ${quote(`${ideas[j]} ${ideas[i]}`)} ✓ +2`, color: "var(--good)" },
+                        message: `${quote(names[0])} and ${quote(names[1])} are both new → valid in both orders, ideaA ideaB and ideaB ideaA: +2.`
+                    });
+                } else {
+                    const taken = names.filter((_, k) => exists[k]);
+                    const why = ideas[i][0] === ideas[j][0]
+                        ? `Same first letter: the swap gives back ${quote(ideas[i])} and ${quote(ideas[j])}, both already ideas`
+                        : `${taken.map(quote).join(" and ")} ${taken.length === 1 ? "is" : "are"} already in the ideas`;
+                    record({
+                        cards, swap, stats, color: "var(--bad)",
+                        formed: { text: `${quote(`${ideas[i]} ${ideas[j]}`)} ✗`, color: "var(--bad)" },
+                        message: `${why} → not valid, in either order.`
+                    });
+                }
+            }
+        }
+
+        const count = steps.at(-1).count;
+        record({
+            stats: ["done", "–", lookups], color: "var(--good)",
+            message: `Done: ${count} valid name${count === 1 ? "" : "s"} after trying every pair, ${lookups} lookups.`
+        });
+        return steps;
+    }
+
+    // Suffixes grouped by first letter, shared ones dropped per pair of groups, mirrors
+    // solution/NamingACompanySuffixGroups.kt. Empty groups add 0, so only the letters that occur are shown.
+    function buildSuffixGroupsSteps(ideas) {
+        const n = ideas.length;
+        const { steps, record, add } = recorder(n);
+        const groups = new Map();   // letter -> suffixes, in the order the letters occur
+        let checks = 0;
+
+        const snapshot = (roleOf = () => "", stateOf = () => "") => [...groups.keys()].sort().map(letter => ({
+            letter, role: roleOf(letter),
+            suffixes: [...groups.get(letter)].map(text => ({ text, state: stateOf(letter, text) }))
+        }));
+
+        record({ groups: [], stats: ["–", "–", 0], message: "Group the ideas by their first letter, and keep only the rest of each idea, its suffix." });
+
+        // 1. fill the groups
+        ideas.forEach((idea, index) => {
+            const letter = idea[0];
+            const suffix = idea.slice(1);
+            if (!groups.has(letter)) {
+                groups.set(letter, new Set());
+            }
+            groups.get(letter).add(suffix);
+            record({
+                cards: ideas.map((_, k) => k === index ? "current" : ""),
+                groups: snapshot(l => l === letter ? "current" : "", (l, text) => l === letter && text === suffix ? "added" : ""),
+                stats: [letter, quote(suffix), checks], color: "var(--cursor)",
+                message: `${quote(idea)} goes to group ${letter} as ${suffix ? quote(suffix) : '"" (nothing after the first letter)'}.`
+            });
+        });
+
+        // 2. every ordered pair of groups: drop the shared suffixes, multiply what's left
+        const letters = [...groups.keys()].sort();
+        for (const a of letters) {
+            for (const b of letters) {
+                if (a === b) {
+                    continue;
+                }
+                const onlyA = [...groups.get(a)].filter(text => !groups.get(b).has(text));
+                const onlyB = [...groups.get(b)].filter(text => !groups.get(a).has(text));
+                checks += groups.get(a).size + groups.get(b).size;
+                const product = onlyA.length * onlyB.length;
+                const shared = [...groups.get(a)].filter(text => groups.get(b).has(text));
+                add(product, `${a}, ${b}: ${onlyA.length} · ${onlyB.length} = ${product}`);
+                record({
+                    groups: snapshot(
+                        l => l === a ? "first" : l === b ? "second" : "",
+                        (l, text) => l !== a && l !== b ? "" : shared.includes(text) ? "shared" : "kept"
+                    ),
+                    stats: [`${a}, ${b}`, `${onlyA.length} · ${onlyB.length}`, checks],
+                    color: product ? "var(--good)" : "var(--bad)",
+                    formed: {
+                        text: `${a} only ${setText(onlyA)} · ${b} only ${setText(onlyB)} = ${onlyA.length} · ${onlyB.length} = ${product}`,
+                        color: product ? "var(--good)" : "var(--bad)"
+                    },
+                    message: (shared.length
+                        ? `${shared.map(quote).join(", ")} ${shared.length === 1 ? "is" : "are"} in both groups: swapping it would give an existing idea, so drop it. `
+                        : `Groups ${a} and ${b} share no suffix. `)
+                        + `Every ${a} idea that's left pairs with every ${b} idea that's left: ${onlyA.length} · ${onlyB.length} = +${product}.`
+                });
+            }
+        }
+
+        const count = steps.at(-1).count;
+        record({
+            groups: snapshot(), stats: ["done", "–", checks], color: "var(--good)",
+            message: `Done: ${count} valid name${count === 1 ? "" : "s"}, counted per pair of letters instead of per pair of ideas, ${checks} suffix checks.`
+        });
+        return steps;
+    }
+
+    const STRATEGIES = {
+        bruteforce: {
+            build: buildBruteforceSteps,
+            labels: ["Pair i, j", "Swapped names", "Lookups"],
+            height: 290,
+            legend: [["--p1", "ideaA"], ["--p2", "ideaB"], ["--good", "new name / valid"], ["--bad", "already an idea"]],
+            description: `Strategy shown (<code>solution/NamingACompanyBruteforce.kt</code>): try
+                <strong style="color: var(--p1)">every pair</strong> of ideas, swap the first letters and look both new
+                names up in a hash set. O(n² · k) time, O(n) space.`
+        },
+        suffixGroups: {
+            build: buildSuffixGroupsSteps,
+            labels: ["Groups a, b", "Only a · only b", "Suffix checks"],
+            legend: [["--cursor", "current idea"], ["--p1", "group a"], ["--p2", "group b"], ["--good", "suffix kept"], ["--bad", "shared suffix, dropped"]],
+            description: `Strategy shown (<code>solution/NamingACompanySuffixGroups.kt</code>): group the
+                <strong style="color: var(--p1)">suffixes by first letter</strong>, then for every pair of letters drop the
+                shared suffixes and multiply the rest. O(26 · n · k) time, O(n · k) space.`
+        }
+    };
+
+    function el(name, attrs = {}, text) {
+        const node = document.createElementNS(SVG_NS, name);
+        for (const [key, value] of Object.entries(attrs)) {
+            node.setAttribute(key, value);
+        }
+        if (text !== undefined) {
+            node.textContent = text;
+        }
+        return node;
+    }
+
+    const ROLE_COLORS = { first: "var(--p1)", second: "var(--p2)", current: "var(--cursor)", hit: "var(--good)", "": null };
+
+    function box(svg, x, y, width, height, color, extra = {}) {
+        svg.append(el("rect", {
+            x, y, width, height, rx: 6,
+            fill: color || "var(--panel)", "fill-opacity": color ? 0.18 : 1, stroke: color || "var(--border)",
+            "stroke-width": color ? 3 : 2, ...extra
+        }));
+    }
+
+    // one name as letter cells, the first letter coloured by the idea it came from
+    function letterRow(svg, x, y, name, firstColor, restColor) {
+        [...name].forEach((ch, k) => {
+            const color = k === 0 ? firstColor : restColor;
+            box(svg, x + k * CELL + 1, y, CELL - 2, 32, color);
+            svg.append(el("text", {
+                x: x + k * CELL + CELL / 2, y: y + 22, "text-anchor": "middle", "font-size": 17, "font-weight": 600,
+                "font-family": "ui-monospace, monospace", fill: "var(--text)"
+            }, ch));
+        });
+    }
+
+    function renderSwap(svg, swap) {
+        const { a, b, names, exists } = swap;
+        const left = 90;
+        const right = 420;
+        svg.append(el("text", { x: 20, y: SWAP_Y - 12, "font-size": 12, "font-weight": 600, fill: "var(--muted)" }, "swap the first letters"));
+        [[a, names[0], "var(--p1)", "var(--p2)", exists[0]], [b, names[1], "var(--p2)", "var(--p1)", exists[1]]].forEach(([idea, name, own, other, taken], row) => {
+            const y = SWAP_Y + row * 44;
+            svg.append(el("text", { x: left - 14, y: y + 22, "text-anchor": "end", "font-size": 13, "font-weight": 700, fill: own }, row ? "ideaB" : "ideaA"));
+            letterRow(svg, left, y, idea, own, null);
+            svg.append(el("text", { x: (left + MAX_LENGTH * CELL + right) / 2, y: y + 23, "text-anchor": "middle", "font-size": 20, fill: "var(--muted)" }, "→"));
+            letterRow(svg, right, y, name, other, null);
+            svg.append(el("text", {
+                x: right + name.length * CELL + 12, y: y + 22, "font-size": 14, "font-weight": 700, fill: taken ? "var(--bad)" : "var(--good)"
+            }, taken ? "✗ already an idea" : "✓ new"));
+        });
+    }
+
+    function renderGroups(svg, groups) {
+        svg.append(el("text", { x: 20, y: GROUPS_Y - 12, "font-size": 12, "font-weight": 600, fill: "var(--muted)" }, "first letter → suffixes"));
+        groups.forEach(({ letter, role, suffixes }, row) => {
+            const y = GROUPS_Y + row * ROW_H;
+            const roleColor = ROLE_COLORS[role];
+            box(svg, 40, y, 40, ROW_H - 6, roleColor);
+            svg.append(el("text", {
+                x: 60, y: y + 21, "text-anchor": "middle", "font-size": 17, "font-weight": 700, "font-family": "ui-monospace, monospace", fill: roleColor || "var(--text)"
+            }, letter));
+            let x = 100;
+            suffixes.forEach(({ text, state }) => {
+                const label = text ? quote(text) : '""';
+                const width = 20 + label.length * 9.5;
+                const color = { shared: "var(--bad)", kept: "var(--good)", added: "var(--cursor)" }[state] || null;
+                box(svg, x, y + 2, width, ROW_H - 10, color, state === "shared" ? { "stroke-dasharray": "5 4" } : {});
+                const textNode = el("text", {
+                    x: x + width / 2, y: y + 21, "text-anchor": "middle", "font-size": 15, "font-family": "ui-monospace, monospace",
+                    fill: state === "shared" ? "var(--bad)" : "var(--text)", ...(state === "shared" ? { "text-decoration": "line-through" } : {})
+                }, label);
+                svg.append(textNode);
+                x += width + 8;
+            });
+        });
+    }
+
+    function renderChart(step) {
+        const svg = document.getElementById("chart");
+        svg.replaceChildren();
+
+        // the ideas as cards, with their index
+        svg.append(el("text", { x: 20, y: IDEAS_Y - 12, "font-size": 12, "font-weight": 600, fill: "var(--muted)" }, "ideas"));
+        const n = ideas.length;
+        const cw = Math.min(120, 760 / n);
+        const left = (W - n * cw) / 2;
+        ideas.forEach((idea, i) => {
+            const x = left + i * cw;
+            box(svg, x + 3, IDEAS_Y, cw - 6, CARD_H, ROLE_COLORS[step.cards[i]]);
+            svg.append(el("text", {
+                x: x + cw / 2, y: IDEAS_Y + CARD_H / 2 + 6, "text-anchor": "middle", "font-weight": 600,
+                "font-family": "ui-monospace, monospace", "font-size": Math.min(17, (cw - 10) / (Math.max(idea.length, 2) * 0.62)),
+                fill: "var(--text)"
+            }, idea));
+            svg.append(el("text", { x: x + cw / 2, y: IDEAS_Y + CARD_H + 15, "text-anchor": "middle", "font-size": 11, fill: "var(--muted)" }, i));
+        });
+
+        let bottom = SWAP_Y + 88;
+        if (step.swap) {
+            renderSwap(svg, step.swap);
+        }
+        if (step.groups) {
+            renderGroups(svg, step.groups);
+            bottom = GROUPS_Y + Math.max(step.groups.length, 2) * ROW_H;
+        }
+
+        // the company names of this pair, or the product of this pair of groups
+        if (step.formed) {
+            svg.append(el("text", {
+                x: W / 2, y: bottom + 34, "text-anchor": "middle", "font-size": 16, "font-weight": 700,
+                "font-family": "ui-monospace, monospace", fill: step.formed.color
+            }, step.formed.text));
+        }
+
+        // the suffix groups grow with the input: the chart grows with them
+        const groupRows = strategy === "suffixGroups" ? Math.max(new Set(ideas.map(idea => idea[0])).size, 2) : 0;
+        const height = groupRows ? GROUPS_Y + groupRows * ROW_H + 56 : STRATEGIES.bruteforce.height;
+        svg.setAttribute("viewBox", `0 0 ${W} ${height}`);
+    }
+
+    function render() {
+        const step = steps[current];
+        const isDone = current === steps.length - 1;
+        const config = STRATEGIES[strategy];
+
+        renderChart(step);
+
+        config.labels.forEach((label, i) => {
+            document.getElementById(`label${i}`).textContent = label;
+            document.getElementById(`stat${i}`).textContent = step.stats[i];
+        });
+        document.getElementById("counter").textContent = step.count;
+
+        const message = document.getElementById("message");
+        message.textContent = step.message;
+        message.style.borderLeftColor = step.color || "";
+
+        // cross-check against the other approach
+        const [checkName, check] = strategy === "bruteforce" ? ["suffix groups", buildSuffixGroupsSteps] : ["bruteforce", buildBruteforceSteps];
+        const expected = check(ideas).at(-1).count;
+        document.getElementById("result").textContent = isDone
+            ? `Valid names = ${step.count} ${step.count === expected ? "✓" : "✗"} (${checkName} cross-check: ${expected})`
+            : "";
+
+        const list = document.getElementById("log");
+        list.replaceChildren(...step.log.map(entry => {
+            const item = document.createElement("li");
+            item.textContent = entry;
+            return item;
+        }));
+        document.getElementById("noLog").style.display = step.log.length ? "none" : "block";
+
+        document.getElementById("reset").disabled = current === 0;
+        document.getElementById("back").disabled = current === 0;
+        document.getElementById("next").disabled = isDone;
+    }
+
+    // rebuild the snapshots for the current input and strategy, start from the beginning
+    function rebuild() {
+        stop();
+        steps = STRATEGIES[strategy].build(ideas);
+        current = 0;
+        render();
+    }
+
+    function load(newIdeas) {
+        ideas = newIdeas;
+        document.getElementById("custom").value = ideas.join(",");
+        document.getElementById("error").textContent = "";
+        rebuild();
+    }
+
+    function selectStrategy(name) {
+        strategy = STRATEGIES[name] ? name : "suffixGroups";
+        document.querySelectorAll("[data-strategy]").forEach(tab => {
+            tab.setAttribute("aria-selected", tab.dataset.strategy === strategy);
+        });
+        const config = STRATEGIES[strategy];
+        document.getElementById("strategy").innerHTML = config.description;
+        document.getElementById("legend").replaceChildren(...config.legend.map(([token, text]) => {
+            const chip = document.createElement("span");
+            chip.style.setProperty("--chip", `var(${token})`);
+            chip.textContent = text;
+            return chip;
+        }));
+        try {
+            history.replaceState(null, "", `#${strategy}`);
+        } catch (e) {
+            // some browsers block history changes for pages opened from disk, the tab still works
+        }
+    }
+
+    function go(index) {
+        current = Math.max(0, Math.min(steps.length - 1, index));
+        render();
+    }
+
+    function play() {
+        if (current === steps.length - 1) {
+            current = 0;
+        }
+        document.getElementById("play").textContent = "⏸ Pause";
+        timer = setInterval(() => {
+            if (current >= steps.length - 1) {
+                stop();
+                return;
+            }
+            go(current + 1);
+        }, 800);
+    }
+
+    function stop() {
+        clearInterval(timer);
+        timer = null;
+        document.getElementById("play").textContent = "▶ Play";
+    }
+
+    // comma-separated ideas
+    function parseIdeas(text) {
+        const values = text.replace(/[\[\]"']/g, "").split(",").map(idea => idea.trim()).filter(idea => idea.length);
+        if (values.length < 2 || values.length > MAX_IDEAS) {
+            throw new Error(`Enter 2 to ${MAX_IDEAS} ideas, separated by commas.`);
+        }
+        if (values.some(idea => !/^[a-z]+$/.test(idea) || idea.length > MAX_LENGTH)) {
+            throw new Error(`Ideas must be lowercase letters a–z, 1 to ${MAX_LENGTH} each.`);
+        }
+        if (new Set(values).size !== values.length) {
+            throw new Error("The ideas must be unique.");
+        }
+        return values;
+    }
+
+    // a few letters and suffixes, so that suffixes are shared between groups
+    function randomIdeas() {
+        const letters = "bcdlt";
+        const suffixes = ["ack", "ake", "ime", "offee", "onuts", "ea"];
+        const pick = list => list[Math.floor(Math.random() * list.length)];
+        const result = new Set();
+        const size = 4 + Math.floor(Math.random() * 3);
+        while (result.size < size) {
+            result.add(pick(letters) + pick(suffixes));
+        }
+        return [...result];
+    }
+
+    document.querySelectorAll("[data-strategy]").forEach(tab => {
+        tab.addEventListener("click", () => {
+            selectStrategy(tab.dataset.strategy);
+            rebuild();
+        });
+    });
+
+    document.querySelectorAll("[data-example]").forEach(button => {
+        button.addEventListener("click", () => load(parseIdeas(button.dataset.example)));
+    });
+
+    document.getElementById("random").addEventListener("click", () => load(randomIdeas()));
+
+    document.getElementById("load").addEventListener("click", () => {
+        try {
+            load(parseIdeas(document.getElementById("custom").value));
+        } catch (e) {
+            document.getElementById("error").textContent = e.message;
+        }
+    });
+
+    document.getElementById("custom").addEventListener("keydown", e => {
+        if (e.key === "Enter") {
+            document.getElementById("load").click();
+        }
+    });
+
+    document.getElementById("reset").addEventListener("click", () => {
+        stop();
+        go(0);
+    });
+    document.getElementById("back").addEventListener("click", () => {
+        stop();
+        go(current - 1);
+    });
+    document.getElementById("next").addEventListener("click", () => {
+        stop();
+        go(current + 1);
+    });
+    document.getElementById("play").addEventListener("click", () => (timer ? stop() : play()));
+
+    document.addEventListener("keydown", e => {
+        if (e.target.tagName === "INPUT") {
+            return;
+        }
+        if (e.key === "ArrowRight") {
+            stop();
+            go(current + 1);
+        } else if (e.key === "ArrowLeft") {
+            stop();
+            go(current - 1);
+        } else if (e.key === "End") {
+            stop();
+            go(steps.length - 1);
+        } else if (e.key === " ") {
+            e.preventDefault();
+            timer ? stop() : play();
+        }
+    });
+
+    // the selected tab is kept in the URL hash, e.g. NamingACompany.html#bruteforce
+    selectStrategy(location.hash.slice(1));
+    load(["coffee", "donuts", "time", "toffee"]);
+</script>
+</body>
+</html>
